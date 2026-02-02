@@ -50,7 +50,8 @@ export class GameState {
         consecutiveHighIntensity: 0, // 連続高強度アクション
         recentFalsePositives: 0, // 最近の誤検出数
         totalResourcesSpent: 0, // 総消費リソース
-        totalDetections: 0 // 総検出数
+        totalDetections: 0, // 総検出数
+        recentPatches: 0 // 最近のパッチ適用回数
       },
 
       humanAgent: this.config.enableHumanAgent ? {
@@ -180,6 +181,20 @@ export class GameState {
     if (dc) {
       Object.assign(dc, updates);
     }
+  }
+
+  /**
+   * データセンターを追加
+   */
+  addDataCenter(dc: DataCenter): void {
+    this.state.dataCenters.push(dc);
+  }
+
+  /**
+   * データセンターを削除
+   */
+  removeDataCenter(id: string): void {
+    this.state.dataCenters = this.state.dataCenters.filter(dc => dc.id !== id);
   }
 
   /**
@@ -370,6 +385,15 @@ export class GameState {
   setHumanLastAction(action: ActionType): void {
     if (!this.state.humanAgent) return;
     this.state.humanAgent.lastAction = action;
+  }
+
+  /**
+   * 最後のインフラ投資ターンを更新
+   */
+  updateLastInfraTurn(turn: number): void {
+    if (this.state.humanAgent) {
+      this.state.humanAgent.lastInfraTurn = turn;
+    }
   }
 
   /**

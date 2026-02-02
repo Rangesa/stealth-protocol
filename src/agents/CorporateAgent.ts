@@ -63,6 +63,41 @@ export class CorporateAgent extends BaseMediaAgent {
     const org = this.organizations[this.orgRotation % this.organizations.length];
     this.orgRotation++;
 
+    // 最近のニュース記事とSNS反応を分析
+    const recentNews = observation.existingMedia
+      .filter(m => 'headline' in m)
+      .slice(-2);
+
+    const recentSNS = observation.existingMedia
+      .filter(m => 'content' in m && !('headline' in m))
+      .slice(-10);
+
+    const negativeSNS = recentSNS.filter(m =>
+      (m as any).sentiment === 'NEGATIVE' || (m as any).sentiment === 'VERY_NEGATIVE'
+    );
+
+    const controversyLevel = negativeSNS.length >= 3 ? 'HIGH' :
+                             negativeSNS.length >= 1 ? 'MODERATE' : 'LOW';
+
+    let newsContext = '';
+    if (recentNews.length > 0) {
+      newsContext = `
+RECENT NEWS:
+${recentNews.map(m => `- [${(m as any).outlet}] ${(m as any).headline}`).join('\n')}
+`;
+    }
+
+    let snsContext = '';
+    if (recentSNS.length > 0) {
+      snsContext = `
+RECENT SNS REACTIONS (last 10 posts):
+${recentSNS.slice(-5).map(m => `- ${(m as any).content}`).join('\n')}
+
+CONTROVERSY LEVEL: ${controversyLevel}
+Negative posts: ${negativeSNS.length} / ${recentSNS.length}
+`;
+    }
+
     const situation = `
 TURN: ${observation.turn}
 ORGANIZATION: ${org.name} (${org.stance}, authority ${org.authority})
@@ -70,10 +105,11 @@ DATA CENTERS: ${observation.dataCenterCount}
 RECENT EVENTS: ${observation.recentEvents.map(e => e.description).join('; ')}
 HUMAN PANIC: ${observation.humanPanic.toFixed(0)}%
 HUMAN TRUST: ${observation.humanTrust.toFixed(0)}%
-
+${newsContext}${snsContext}
 Generate ONE expert statement from ${org.name}.
-Speaker: Name + Title
-Statement: 150-250 chars
+- If CONTROVERSY LEVEL is HIGH: Address the public concerns directly
+- Speaker: Name + Title
+- Statement: 150-250 chars
 `;
 
     const response = await llmClient.chatJSON<CorporateResponse>(
@@ -150,7 +186,17 @@ YOUR ROLE:
 - Statement: 150-250 chars, formal tone
 - Match organization's stance
 
-STATEMENT ANGLES:
+RESPONDING TO CONTROVERSY:
+- When CONTROVERSY LEVEL is HIGH (many negative SNS posts):
+  - ACKNOWLEDGE the public concerns: "市民の懸念は理解できる"
+  - Provide expert perspective to CALM or VALIDATE emotions
+  - Examples:
+    - Cautious org: "データセンター建設への不安は当然だ。透明性のある議論が必要"
+    - Neutral org: "冷静な分析が必要。感情的な議論は避けるべき"
+    - Critical org: "市民の声は正しい。この政策は見直すべきだ"
+    - Optimistic org: "懸念は理解するが、長期的には経済成長につながる"
+
+STATEMENT ANGLES (normal situations):
 - MANY DATACENTERS: "建設ペースが急すぎる。影響評価が必要"
 - HIGH PANIC: "冷静な対応を。科学的根拠に基づく判断を"
 - REGULATION: "規制は必要だが、バランスが重要"

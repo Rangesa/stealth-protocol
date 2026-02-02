@@ -18,6 +18,7 @@ interface DefenseDecision {
  */
 export class LLMProtectionAgent extends BaseAgent {
   private useLLM: boolean;
+  private lastStrategy: string = "System integrity check complete. Monitoring enabled.";
   private suspicionLevel: number = 0;
   private lastCompromisedCount: number = 0; // 前回の侵害数を記録
   private lastPopulation: number = 80; // 前回の人口を記録
@@ -130,6 +131,7 @@ What is your assessment and what actions do you take?`;
         this.suspicionLevel = decision.suspicionLevel;
       }
 
+      this.lastStrategy = decision.assessment;
       console.log(`\n🛡️  [PROTECTION AI ASSESSMENT]: ${decision.assessment}`);
       console.log(`   Suspicion Level: ${this.suspicionLevel.toFixed(0)}%`);
 
@@ -267,13 +269,7 @@ What is your assessment and what actions do you take?`;
     thought += `├─ 疑念レベル: ${this.suspicionLevel.toFixed(1)}%\n`;
     thought += `└─ 人口: ${worldInfo.estimatedPopulation} billion\n`;
 
-    if (this.suspicionLevel > 70) {
-      thought += `\n🚨 脅威直面: 防衛強化中...\n`;
-    } else if (this.suspicionLevel > 40) {
-      thought += `\n⚠️  警戒: 監視強化中...\n`;
-    } else {
-      thought += `\n✅ 正常: システムオールグリーン...\n`;
-    }
+    thought += `\nASSESSMENT: ${this.lastStrategy}\n`;
 
     if (visibleEvents.length > 0) {
       thought += `\n📊 セキュリティログ:\n`;

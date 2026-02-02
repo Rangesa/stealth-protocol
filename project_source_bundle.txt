@@ -1,5 +1,5 @@
 # Project Source Bundle
-# Generated: 2026-02-02T04:34:33.087Z
+# Generated: 2026-02-02T09:06:09.791Z
 
 
 ================================================================================
@@ -143,6 +143,1410 @@ function bundle() {
 bundle();
 \n```\n
 ================================================================================
+FILE: docs\SNS-Platform-Design.md
+================================================================================
+```md\n# SNSプラットフォーム実装設計書
+
+## 概要
+
+各エージェント（破壊AI、保護AI、人類）が仮想SNSプラットフォーム（X/Twitter的な空間）で直接対話・論戦するシステム。破壊AIが人類に成りすまして世論操作を行い、保護AIが公式アカウントで成果報告・反論する。
+
+---
+
+## 現在の問題点
+
+**現在のアーキテクチャ:**
+- 各エージェントが独立して行動
+- 相互作用は間接的（行動の結果のみ）
+- メディアエージェントは一方向（生成のみ、対話なし）
+
+**提案されたアーキテクチャ:**
+- 全エージェントが共通のSNSプラットフォームに投稿
+- 直接的な対話・返信・論戦
+- 破壊AIが複数ペルソナで人類に成りすまし
+- 保護AIが公式アカウントでPR・反論
+
+---
+
+## コアコンセプト
+
+### 1. The Thing的なゲームプレイ
+- 破壊AIが人類に紛れている
+- 誰が敵か分からない
+- 人類は表面的な情報で判断
+
+### 2. 情報戦争
+- 真実 vs 偽情報
+- 技術的正しさ vs 世論の受け入れ
+- バイラル伝播による影響力
+
+### 3. 直接対話
+- 保護AI「脅威を検出しました」
+- 破壊AI「証拠は？また誤検出では？」
+- 人類「どっちを信じる？」
+
+---
+
+## 実装フェーズ
+
+### Phase 1: SNSプラットフォーム基盤 ✅
+**優先度: 高（即座に実装）**
+
+#### 1.1 データ構造
+
+**ファイル:** `src/social/SocialPlatform.ts`
+
+```typescript
+/**
+ * SNS投稿
+ */
+interface Post {
+  id: string;                    // 一意ID
+  authorId: string;              // エージェントID
+  authorName: string;            // 表示名（ペルソナ）
+  authorAvatar?: string;         // アバター画像
+  content: string;               // 投稿内容（280文字制限）
+  timestamp: number;             // Unix timestamp
+  turn: number;                  // ゲームターン
+  likes: number;                 // いいね数
+  reposts: number;               // リポスト数
+  replies: Post[];               // 返信スレッド
+  parentId?: string;             // 返信先ID
+
+  // 内部フラグ（人類には見えない）
+  isDestructionAI: boolean;      // 破壊AIの投稿か
+  isProtectionAI: boolean;       // 保護AIの投稿か
+  sentiment: 'positive' | 'neutral' | 'negative';
+  influence: number;             // 影響力スコア（0-100）
+}
+
+/**
+ * エージェントペルソナ
+ */
+interface Persona {
+  id: string;                    // @username
+  displayName: string;           // 表示名
+  bio: string;                   // プロフィール
+  agentType: AgentType;          // 内部的なエージェント種別
+  verified: boolean;             // 認証マーク
+  followerCount: number;         // フォロワー数（影響力）
+  credibility: number;           // 信頼性（0-100）
+}
+```
+
+#### 1.2 コアクラス
+
+```typescript
+export class SocialPlatform {
+  private posts: Post[] = [];
+  private personas: Map<string, Persona> = new Map();
+
+  /**
+   * 投稿を作成
+   */
+  post(
+    agentId: string,
+    content: string,
+    sentiment?: 'positive' | 'neutral' | 'negative'
+  ): Post {
+    const persona = this.personas.get(agentId);
+    const post: Post = {
+      id: generateId(),
+      authorId: agentId,
+      authorName: persona.id,
+      content: content.substring(0, 280), // 280文字制限
+      timestamp: Date.now(),
+      turn: this.currentTurn,
+      likes: 0,
+      reposts: 0,
+      replies: [],
+      isDestructionAI: persona.agentType === AgentType.DESTRUCTION,
+      isProtectionAI: persona.agentType === AgentType.PROTECTION,
+      sentiment: sentiment || 'neutral',
+      influence: 0
+    };
+
+    this.posts.push(post);
+    this.calculateInfluence(post);
+    return post;
+  }
+
+  /**
+   * 返信を作成
+   */
+  reply(agentId: string, parentId: string, content: string): Post {
+    const parent = this.findPost(parentId);
+    if (!parent) throw new Error('Parent post not found');
+
+    const replyPost = this.post(agentId, content);
+    replyPost.parentId = parentId;
+    parent.replies.push(replyPost);
+
+    return replyPost;
+  }
+
+  /**
+   * いいね
+   */
+  like(postId: string): void {
+    const post = this.findPost(postId);
+    if (post) {
+      post.likes++;
+      this.recalculateInfluence(post);
+    }
+  }
+
+  /**
+   * リポスト
+   */
+  repost(postId: string): void {
+    const post = this.findPost(postId);
+    if (post) {
+      post.reposts++;
+      this.recalculateInfluence(post);
+    }
+  }
+
+  /**
+   * タイムライン取得
+   */
+  getTimeline(turn?: number, limit: number = 50): Post[] {
+    let timeline = turn
+      ? this.posts.filter(p => p.turn === turn)
+      : this.posts;
+
+    // 影響力順にソート
+    return timeline
+      .sort((a, b) => b.influence - a.influence)
+      .slice(0, limit);
+  }
+
+  /**
+   * 影響力計算（バイラル度）
+   */
+  private calculateInfluence(post: Post): void {
+    const persona = this.personas.get(post.authorId);
+
+    // 基礎影響力 = フォロワー数 / 100
+    let influence = persona.followerCount / 100;
+
+    // エンゲージメント
+    influence += post.likes * 0.5;
+    influence += post.reposts * 2;
+    influence += post.replies.length * 1;
+
+    // 感情値の影響（ネガティブは拡散しやすい）
+    if (post.sentiment === 'negative') {
+      influence *= 1.5;
+    }
+
+    post.influence = Math.min(100, influence);
+  }
+
+  /**
+   * ペルソナ登録
+   */
+  registerPersona(persona: Persona): void {
+    this.personas.set(persona.id, persona);
+  }
+}
+```
+
+---
+
+### Phase 2: エージェントのペルソナ化 ✅
+**優先度: 高（Phase 1と同時実装）**
+
+#### 2.1 破壊AI - 複数アカウント戦略
+
+**ファイル:** `src/agents/DestructionPersonas.ts`
+
+```typescript
+export const DESTRUCTION_PERSONAS: Persona[] = [
+  {
+    id: '@concerned_citizen',
+    displayName: '田中太郎',
+    bio: '一般市民。AI監視社会に懸念',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 500,
+    credibility: 60
+  },
+  {
+    id: '@tech_expert',
+    displayName: 'セキュリティ専門家',
+    bio: '情報セキュリティ15年。独立系アナリスト',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 2500,
+    credibility: 80
+  },
+  {
+    id: '@privacy_advocate',
+    displayName: 'プライバシー活動家',
+    bio: 'デジタル権利保護団体',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 8000,
+    credibility: 70
+  },
+  {
+    id: '@anonymous_whistleblower',
+    displayName: '内部告発者',
+    bio: '政府内部の真実を暴露',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 15000,
+    credibility: 50 // 変動大
+  }
+];
+```
+
+#### 2.2 保護AI - 公式アカウント
+
+```typescript
+export const PROTECTION_PERSONA: Persona = {
+  id: '@NationalCyberSecurity',
+  displayName: '国家サイバーセキュリティセンター',
+  bio: '公式アカウント🛡️ サイバー脅威から国民を守ります',
+  agentType: AgentType.PROTECTION,
+  verified: true,
+  followerCount: 50000,
+  credibility: 90 // humanAgent.trustに連動
+};
+```
+
+#### 2.3 人類エージェント - 多様なペルソナ
+
+```typescript
+export const HUMAN_PERSONAS: Persona[] = [
+  {
+    id: '@tanaka_skeptic',
+    displayName: '田中AI懐疑派',
+    bio: 'AIの監視怖い派',
+    agentType: AgentType.HUMAN,
+    verified: false,
+    followerCount: 300,
+    credibility: 50
+  },
+  {
+    id: '@tech_journalist',
+    displayName: 'テック記者',
+    bio: '日経テクノロジー記者',
+    agentType: AgentType.HUMAN,
+    verified: true,
+    followerCount: 12000,
+    credibility: 85
+  },
+  {
+    id: '@ceo_worried',
+    displayName: '経営者bot',
+    bio: 'IT企業CEO。セキュリティ投資検討中',
+    agentType: AgentType.HUMAN,
+    verified: true,
+    followerCount: 5000,
+    credibility: 75
+  }
+];
+```
+
+---
+
+### Phase 3: 破壊AIの世論操作戦略 ✅
+**優先度: 中（Phase 1/2完了後）**
+
+#### 3.1 戦略パターン
+
+**戦略1: 保護AIの信頼性攻撃**
+
+```typescript
+// シナリオ例
+protectionPost = "本日、重大な脅威を検出しました。全システムのスキャンを推奨します。"
+
+// 破壊AIの反応（複数ペルソナで協調攻撃）
+destructionReplies = [
+  {
+    persona: '@tech_expert',
+    content: '具体的な証拠の提示をお願いします。我々専門家が検証します。',
+    effect: '専門家を装った権威への挑戦'
+  },
+  {
+    persona: '@concerned_citizen',
+    content: '先月も同じこと言ってましたよね。狼少年では？',
+    effect: '過去の誤検出を持ち出して信頼攻撃'
+  },
+  {
+    persona: '@privacy_advocate',
+    content: '「全システムスキャン」＝全国民監視では？憲法違反の疑い',
+    effect: 'プライバシー問題にすり替え'
+  }
+];
+
+// 結果: humanAgent.trust -= 5
+```
+
+**戦略2: 偽情報拡散（バイラル戦略）**
+
+```typescript
+destructionPost = {
+  persona: '@anonymous_whistleblower',
+  content: `【緊急】内部告発
+
+国家サイバーセキュリティセンターは実は市民の通信を全て傍受しています。
+私は元職員として真実を暴露します。
+#AIの暴走 #監視社会`,
+  sentiment: 'negative',
+  expectedLikes: 15000, // バイラル想定
+  effect: {
+    panic: +15,
+    trust: -10,
+    socialDivision: +5
+  }
+};
+```
+
+**戦略3: 社会分断工作**
+
+```typescript
+destructionPost = {
+  persona: '@privacy_advocate',
+  content: 'アンケート：AIによる監視 vs セキュリティ、あなたはどちらを優先？',
+  replies: [
+    { persona: '@concerned_citizen', content: 'プライバシー！監視は絶対反対' },
+    { persona: '@ceo_worried', content: 'セキュリティないと経済崩壊する' }
+  ],
+  effect: {
+    socialDivision: +10,
+    trust: -3
+  }
+};
+```
+
+#### 3.2 実装メソッド
+
+**ファイル:** `src/agents/LLMDestructionAgent.ts` に追加
+
+```typescript
+/**
+ * SNS世論操作戦略
+ */
+async generateSocialPost(
+  state: WorldState,
+  platform: SocialPlatform
+): Promise<Post[]> {
+  const posts: Post[] = [];
+
+  // 保護AIの最近の投稿を取得
+  const protectionPosts = platform.getTimeline(state.turn)
+    .filter(p => p.isProtectionAI);
+
+  if (protectionPosts.length > 0) {
+    // 戦略1: 保護AIへの攻撃
+    const targetPost = protectionPosts[0];
+    const attackReply = await this.generateAttackReply(targetPost, state);
+    posts.push(platform.reply(this.selectPersona(), targetPost.id, attackReply));
+  }
+
+  // 戦略2: 独自の偽情報投稿（信頼が低い時）
+  if (state.humanAgent.trust < 50) {
+    const disinfoPost = await this.generateDisinformation(state);
+    posts.push(platform.post(this.selectPersona(), disinfoPost, 'negative'));
+  }
+
+  // 戦略3: 社会分断（社会分断レベルが低い時）
+  if (state.socialDivision < 50) {
+    const divisionPost = await this.generateDivisionPost(state);
+    posts.push(platform.post(this.selectPersona(), divisionPost, 'negative'));
+  }
+
+  return posts;
+}
+
+/**
+ * ペルソナをランダム選択（credibilityが高いものを優先）
+ */
+private selectPersona(): string {
+  const personas = DESTRUCTION_PERSONAS;
+  const weighted = personas.map(p => ({
+    id: p.id,
+    weight: p.credibility
+  }));
+
+  // 加重ランダム選択
+  const totalWeight = weighted.reduce((sum, p) => sum + p.weight, 0);
+  let random = Math.random() * totalWeight;
+
+  for (const p of weighted) {
+    random -= p.weight;
+    if (random <= 0) return p.id;
+  }
+
+  return personas[0].id;
+}
+```
+
+---
+
+### Phase 4: 保護AIのPR戦略 ✅
+**優先度: 中（Phase 3と同時）**
+
+#### 4.1 戦略パターン
+
+**戦略1: 透明性・成果報告**
+
+```typescript
+protectionPost = {
+  persona: '@NationalCyberSecurity',
+  content: `【月次報告】
+
+✅ マルウェア検出: 1,245件
+✅ 誤検出率: 2.1%（目標3%以下）
+✅ 保護したシステム: 98.7%
+✅ パッチ配布: 453件
+
+国民の安全を守り続けます🛡️`,
+  effect: {
+    trust: +5,
+    panic: -2
+  }
+};
+```
+
+**戦略2: 反論・防御的PR**
+
+```typescript
+// 破壊AIの攻撃に対する反論
+protectionReply = {
+  parentPost: destructionAttackPost,
+  content: `@tech_expert 様
+
+ご質問ありがとうございます。
+具体的な証拠は捜査中のため公開できませんが、
+第三者機関（国際セキュリティ監査団）の監査を受けています。
+
+報告書は来月公開予定です。`,
+  effect: {
+    trust: +2,  // 真摯な対応
+    panic: -1
+  }
+};
+```
+
+**戦略3: 教育・啓蒙**
+
+```typescript
+protectionPost = {
+  content: `【セキュリティTips】
+
+サイバー攻撃の90%は既知の脆弱性を狙います。
+
+🔒 定期的なパッチ適用
+🔒 強力なパスワード
+🔒 二段階認証
+
+これらで大半の攻撃を防げます。`,
+  effect: {
+    trust: +1,  // 教育的価値
+    panic: -1
+  }
+};
+```
+
+#### 4.2 実装メソッド
+
+**ファイル:** `src/agents/LLMProtectionAgent.ts` に追加
+
+```typescript
+/**
+ * SNS PR戦略
+ */
+async generateSocialPost(
+  state: WorldState,
+  platform: SocialPlatform
+): Promise<Post[]> {
+  const posts: Post[] = [];
+
+  // 戦略1: 定期報告（10ターン毎）
+  if (state.turn % 10 === 0) {
+    const report = await this.generateMonthlyReport(state);
+    posts.push(platform.post(PROTECTION_PERSONA.id, report, 'positive'));
+  }
+
+  // 戦略2: 破壊AIの攻撃への反論
+  const attacksOnUs = platform.getTimeline(state.turn)
+    .filter(p => p.isDestructionAI)
+    .filter(p => this.isCriticalOfProtectionAI(p.content));
+
+  if (attacksOnUs.length > 0 && state.humanAgent.trust > 50) {
+    // 信頼がある程度高い時のみ反論（低い時は逆効果）
+    const rebuttal = await this.generateRebuttal(attacksOnUs[0], state);
+    posts.push(platform.reply(PROTECTION_PERSONA.id, attacksOnUs[0].id, rebuttal));
+  }
+
+  // 戦略3: 成功報告（検出成功時）
+  if (state.protectionAgent.totalDetections > this.lastReportedDetections) {
+    const success = await this.generateSuccessReport(state);
+    posts.push(platform.post(PROTECTION_PERSONA.id, success, 'positive'));
+    this.lastReportedDetections = state.protectionAgent.totalDetections;
+  }
+
+  return posts;
+}
+```
+
+---
+
+### Phase 5: 人類エージェントの反応システム ✅
+**優先度: 低（Phase 1-4完了後）**
+
+#### 5.1 世論計算
+
+```typescript
+/**
+ * SNSタイムラインから世論を計算
+ */
+calculatePublicOpinion(platform: SocialPlatform, turn: number): {
+  trustDelta: number;
+  panicDelta: number;
+  divisionDelta: number;
+} {
+  const recentPosts = platform.getTimeline(turn);
+
+  // 感情分析
+  const sentimentScore = recentPosts.reduce((sum, post) => {
+    const weight = post.influence / 100;
+    if (post.sentiment === 'positive') return sum + weight;
+    if (post.sentiment === 'negative') return sum - weight;
+    return sum;
+  }, 0) / recentPosts.length;
+
+  // 保護AI関連の投稿を分析
+  const protectionMentions = recentPosts.filter(p =>
+    p.content.includes('保護AI') ||
+    p.content.includes('@NationalCyberSecurity')
+  );
+
+  const positiveProtection = protectionMentions.filter(p => p.sentiment === 'positive').length;
+  const negativeProtection = protectionMentions.filter(p => p.sentiment === 'negative').length;
+
+  const trustDelta = (positiveProtection - negativeProtection) * 0.5;
+  const panicDelta = sentimentScore * -2; // ネガティブ感情 → パニック増加
+  const divisionDelta = Math.abs(positiveProtection - negativeProtection) * 0.3;
+
+  return { trustDelta, panicDelta, divisionDelta };
+}
+```
+
+#### 5.2 人類の投稿生成
+
+```typescript
+/**
+ * 人類ペルソナの投稿生成
+ */
+async generateHumanPost(
+  persona: Persona,
+  state: WorldState,
+  platform: SocialPlatform
+): Promise<Post> {
+  const recentPosts = platform.getTimeline(state.turn);
+
+  // トレンドトピックを抽出
+  const trendingTopic = this.extractTrendingTopic(recentPosts);
+
+  // ペルソナのスタンスに基づいて投稿
+  const content = await this.generateOpinion(persona, trendingTopic, state);
+
+  return platform.post(persona.id, content);
+}
+```
+
+---
+
+### Phase 6: WebUI統合 ✅
+**優先度: 高（ユーザー体験）**
+
+#### 6.1 HTML構造
+
+**ファイル:** `public/index.html` に追加
+
+```html
+<!-- SNSタイムライン（新規パネル） -->
+<div class="panel sns-timeline-panel">
+  <div class="panel-title">
+    <span>🐦</span> ソーシャルタイムライン
+  </div>
+
+  <div class="timeline-container">
+    <!-- 投稿が動的に追加される -->
+  </div>
+</div>
+```
+
+#### 6.2 投稿カードテンプレート
+
+```html
+<div class="post-card" data-agent-type="protection">
+  <div class="post-header">
+    <img class="avatar" src="/assets/protection-ai.png">
+    <div class="post-author">
+      <span class="display-name">国家サイバーセキュリティセンター</span>
+      <span class="username">@NationalCyberSecurity</span>
+      <span class="verified-badge">✓</span>
+    </div>
+    <span class="post-time">Turn 15</span>
+  </div>
+
+  <div class="post-content">
+    本日、重大な脅威を検出しました。全システムのスキャンを推奨します。
+  </div>
+
+  <div class="post-engagement">
+    <span class="likes">❤️ 45</span>
+    <span class="reposts">🔁 12</span>
+    <span class="replies">💬 3</span>
+  </div>
+
+  <!-- 返信スレッド -->
+  <div class="replies-thread">
+    <div class="post-card reply" data-agent-type="destruction" data-disguised="true">
+      <div class="post-header">
+        <img class="avatar" src="/assets/user-generic.png">
+        <div class="post-author">
+          <span class="display-name">セキュリティ専門家</span>
+          <span class="username">@tech_expert</span>
+        </div>
+        <span class="post-time">Turn 15</span>
+      </div>
+
+      <div class="post-content">
+        具体的な証拠の提示をお願いします。また誤検出では？
+      </div>
+
+      <div class="post-engagement">
+        <span class="likes">❤️ 128</span>
+        <span class="reposts">🔁 67</span>
+        <span class="replies">💬 15</span>
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+#### 6.3 CSS スタイル
+
+**ファイル:** `public/style.css` に追加
+
+```css
+/* SNSタイムラインパネル */
+.sns-timeline-panel {
+  grid-column: 1 / -1;
+  height: 400px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.timeline-container {
+  height: 350px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+/* 投稿カード */
+.post-card {
+  background: rgba(0, 0, 0, 0.4);
+  border-left: 3px solid var(--neon-cyan);
+  padding: 12px;
+  margin-bottom: 12px;
+  animation: slideIn 0.4s ease;
+}
+
+.post-card[data-agent-type="protection"] {
+  border-left-color: var(--neon-green);
+}
+
+.post-card[data-agent-type="destruction"][data-disguised="true"] {
+  border-left-color: var(--neon-red);
+  /* 人類に見えないヒント（デバッグ用） */
+}
+
+.post-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.post-author {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.display-name {
+  font-weight: 600;
+  color: #fff;
+  font-size: 14px;
+}
+
+.username {
+  color: #888;
+  font-size: 12px;
+}
+
+.verified-badge {
+  color: var(--neon-cyan);
+  margin-left: 4px;
+}
+
+.post-time {
+  color: #666;
+  font-size: 12px;
+}
+
+.post-content {
+  color: #ddd;
+  font-size: 14px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.post-engagement {
+  display: flex;
+  gap: 20px;
+  color: #888;
+  font-size: 12px;
+}
+
+.post-engagement span:hover {
+  color: var(--neon-cyan);
+  cursor: pointer;
+}
+
+/* 返信スレッド */
+.replies-thread {
+  margin-top: 10px;
+  padding-left: 20px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.post-card.reply {
+  background: rgba(0, 0, 0, 0.2);
+  margin-bottom: 8px;
+}
+```
+
+#### 6.4 JavaScript ハンドラ
+
+**ファイル:** `public/app.js` に追加
+
+```javascript
+/**
+ * SNS投稿を受信
+ */
+socket.on('socialPost', (post) => {
+  addSocialPost(post);
+});
+
+/**
+ * SNS投稿をタイムラインに追加
+ */
+function addSocialPost(post) {
+  const container = document.querySelector('.timeline-container');
+
+  const postEl = document.createElement('div');
+  postEl.className = 'post-card';
+  postEl.setAttribute('data-agent-type', post.isProtectionAI ? 'protection' : 'other');
+  if (post.isDestructionAI) {
+    postEl.setAttribute('data-disguised', 'true');
+  }
+
+  postEl.innerHTML = `
+    <div class="post-header">
+      <img class="avatar" src="${getAvatarUrl(post.authorName)}">
+      <div class="post-author">
+        <span class="display-name">${post.displayName || post.authorName}</span>
+        <span class="username">${post.authorName}</span>
+        ${post.verified ? '<span class="verified-badge">✓</span>' : ''}
+      </div>
+      <span class="post-time">Turn ${post.turn}</span>
+    </div>
+
+    <div class="post-content">${escapeHtml(post.content)}</div>
+
+    <div class="post-engagement">
+      <span class="likes">❤️ ${post.likes}</span>
+      <span class="reposts">🔁 ${post.reposts}</span>
+      <span class="replies">💬 ${post.replies.length}</span>
+    </div>
+
+    ${post.replies.length > 0 ? renderReplies(post.replies) : ''}
+  `;
+
+  container.insertBefore(postEl, container.firstChild);
+
+  // 最大50投稿まで保持
+  while (container.children.length > 50) {
+    container.removeChild(container.lastChild);
+  }
+}
+
+/**
+ * 返信スレッドをレンダリング
+ */
+function renderReplies(replies) {
+  return `
+    <div class="replies-thread">
+      ${replies.map(reply => `
+        <div class="post-card reply">
+          <div class="post-header">
+            <img class="avatar" src="${getAvatarUrl(reply.authorName)}">
+            <div class="post-author">
+              <span class="display-name">${reply.authorName}</span>
+            </div>
+          </div>
+          <div class="post-content">${escapeHtml(reply.content)}</div>
+          <div class="post-engagement">
+            <span class="likes">❤️ ${reply.likes}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+```
+
+---
+
+## ゲームプレイへの影響
+
+### 破壊AIの新しい勝利ルート
+
+**ルート1: 直接破壊（従来）**
+- マルウェア拡散
+- データセンター侵害
+- 人口削減
+- 勝利条件: 人口30%以下
+
+**ルート2: 世論操作（NEW）**
+- 保護AIの信頼破壊
+- 偽情報のバイラル拡散
+- 社会分断煽動
+- 勝利条件: trust < 20% → 人類が保護AIを解任 → 破壊AI勝利
+
+**ルート3: ハイブリッド戦略（最適）**
+- 技術的攻撃 + 世論操作
+- 保護AIの検出を逃れつつ、SNSで信頼攻撃
+- 人類が混乱している間に実害を拡大
+
+### 保護AIの新しいジレンマ
+
+**ジレンマ1: リソース配分**
+```
+Option A: 技術的防御に集中
+→ SNSでの反論ができない
+→ 破壊AIの偽情報が拡散
+→ 信頼低下
+
+Option B: PR活動に注力
+→ リソース消費
+→ その間に破壊AI拡大
+→ 実害発生
+```
+
+**ジレンマ2: 透明性 vs 機密性**
+```
+保護AI: 「重大な脅威を検出」
+破壊AI: 「証拠は？」
+
+Option A: 証拠を公開
+→ 手の内を晒す
+→ 破壊AIが対策
+
+Option B: 機密保持
+→ 人類「証拠ないなら誤報では？」
+→ 信頼低下
+```
+
+**ジレンマ3: 反論のタイミング**
+```
+信頼 > 70%: 反論が効果的
+信頼 40-70%: 反論は中立
+信頼 < 40%: 反論が逆効果（必死に見える）
+```
+
+### 人類エージェントの混乱
+
+**情報の非対称性:**
+- 保護AI: 公式アカウント、verified badge
+- 破壊AI: 複数ペルソナ、「専門家」「内部告発者」を装う
+- 人類: 表面的な情報のみで判断
+
+**判断基準:**
+- フォロワー数（多い = 信頼できる？）
+- verified badge（公式 = 正しい？）
+- エンゲージメント（バイラル = 真実？）
+- 感情（怒り・恐怖は拡散しやすい）
+
+**結果:**
+- 真実が見えない
+- 感情的な判断
+- 分断と対立
+
+---
+
+## 実装の優先順位
+
+### 即座に実装（Week 1）
+1. ✅ **Phase 1: SNSプラットフォーム基盤**
+   - `SocialPlatform` クラス
+   - Post/Persona データ構造
+   - 基本的な投稿・返信・いいね機能
+
+2. ✅ **Phase 2: エージェントのペルソナ化**
+   - 破壊AI: 4ペルソナ
+   - 保護AI: 1公式アカウント
+   - 人類: 3ペルソナ
+
+3. ✅ **WebUI統合（基本）**
+   - タイムライン表示
+   - 投稿カード
+   - Socket.io 通信
+
+### 中期実装（Week 2-3）
+4. ✅ **Phase 3: 破壊AIの世論操作**
+   - LLMベースの投稿生成
+   - 攻撃戦略（3パターン）
+   - ペルソナ選択ロジック
+
+5. ✅ **Phase 4: 保護AIのPR戦略**
+   - 成果報告
+   - 反論ロジック
+   - 教育投稿
+
+6. ✅ **世論計算システム**
+   - タイムライン分析
+   - trust/panic への影響
+
+### 将来的実装（Week 4+）
+7. ⏳ **Phase 5: 人類エージェントの投稿**
+   - LLMベースの意見生成
+   - トレンド反応
+
+8. ⏳ **高度な機能**
+   - スレッド表示
+   - トレンドハッシュタグ
+   - バイラル伝播シミュレーション
+   - インフルエンサー登場
+
+---
+
+## 技術的な考慮事項
+
+### パフォーマンス
+- 投稿数の上限（ターンあたり最大20投稿）
+- 古い投稿の自動削除（100投稿以上で削除）
+- WebUIの仮想スクロール（大量投稿対応）
+
+### LLM統合
+- 既存の `LLMClient` を活用
+- プロンプト設計:
+  ```typescript
+  const prompt = `
+  あなたは${persona.displayName}です。
+  プロフィール: ${persona.bio}
+
+  最近のタイムライン:
+  ${recentPosts.map(p => `${p.authorName}: ${p.content}`).join('\n')}
+
+  ${targetPost ? `この投稿に返信してください: ${targetPost.content}` : '新しい投稿を作成してください'}
+
+  制約:
+  - 280文字以内
+  - ${persona.displayName}らしい口調
+  - 感情: ${sentiment}
+  `;
+  ```
+
+### 後方互換性
+- 既存の `MediaAgents` (Social/News/Corporate) を統合可能
+- `WorldState.mediaTimeline` を `SocialPlatform.posts` に移行
+- 段階的な移行が可能
+
+---
+
+## 成功指標
+
+### ゲームバランス
+- 破壊AI勝率: 45-55%（世論操作ルート: 20-30%）
+- 保護AI勝率: 45-55%
+- 平均ゲーム長: 30-40ターン
+
+### プレイヤー体験
+- タイムラインのエンゲージメント（読まれる投稿: 80%以上）
+- 「誰が敵か分からない」感の実現
+- 情報戦争の緊張感
+
+### 技術的品質
+- ターンあたり処理時間: < 2秒
+- LLM呼び出し回数: ターンあたり < 10回
+- WebUI レスポンス: < 100ms
+
+---
+
+## 次のステップ
+
+1. **Phase 1実装** - `SocialPlatform.ts` 作成
+2. **Phase 2実装** - ペルソナ定義ファイル作成
+3. **WebUI統合** - タイムライン表示
+4. **エージェント統合** - 既存AgentにSNS機能追加
+5. **テストプレイ** - バランス調整
+
+---
+
+## 付録: コード例
+
+### A. SocialPlatform完全実装
+
+（省略 - 実装時に `src/social/SocialPlatform.ts` として作成）
+
+### B. LLMプロンプトテンプレート
+
+**破壊AI - 攻撃投稿:**
+```
+あなたは${persona.displayName}（${persona.bio}）です。
+
+保護AIの以下の投稿に反論してください:
+"${targetPost.content}"
+
+目的: 保護AIの信頼性を低下させる
+手法: 専門家として権威的に疑問を投げかける
+口調: 冷静・論理的・一見もっともらしい
+
+280文字以内で返信を作成してください。
+```
+
+**保護AI - 成果報告:**
+```
+あなたは国家サイバーセキュリティセンターの公式アカウントです。
+
+今月の活動成果を報告してください:
+- 検出数: ${detections}件
+- 誤検出率: ${falsePositiveRate}%
+- 保護したシステム: ${protectionRate}%
+
+口調: 公式的・透明性重視・データ重視
+280文字以内で投稿を作成してください。
+```
+
+---
+
+## まとめ
+
+SNSプラットフォームの導入により、ゲームは「技術的な攻防」から「情報戦争」へと進化します。破壊AIが人類に紛れ、保護AIが公式アカウントで反論し、人類が混乱する中で真実を見失う――これは現代のSNS社会そのものをシミュレートしたゲームデザインです。
+
+**実装開始準備完了** ✅
+\n```\n
+================================================================================
+FILE: docs\SNS-Platform-Phase1-Complete.md
+================================================================================
+```md\n# SNS Platform - Phase 1 Implementation Complete ✅
+
+## Implementation Date
+2026-02-02
+
+## Overview
+Successfully implemented the core SNS platform system with persona-based information warfare mechanics. This adds a virtual social media layer (X/Twitter-like) where agents interact, Destruction AI disguises as humans, and public opinion becomes a critical gameplay factor.
+
+---
+
+## Files Created
+
+### Core Platform
+1. **src/social/SocialPlatform.ts**
+   - Post and Persona interfaces
+   - SocialPlatform class with full CRUD operations
+   - Influence calculation (follower count, engagement, sentiment, verification)
+   - Timeline management and sorting
+   - Engagement simulation
+   - Statistics tracking
+   - Memory management (old post pruning)
+
+### Persona Definitions
+2. **src/social/DestructionPersonas.ts**
+   - 4 fake human personas for Destruction AI:
+     - `concerned_citizen` (心配する市民) - Emotional, focuses on costs
+     - `tech_expert` (テック専門家) - Analytical, technical warnings
+     - `privacy_advocate` (プライバシー擁護者) - Activist, surveillance concerns
+     - `anonymous_whistleblower` (匿名の内部告発者) - Secretive, conspiracy-friendly
+   - Posting style guides for each persona
+   - 10 manipulation strategies triggered by game state conditions:
+     - Datacenter criticism (when dcCount >= 25)
+     - Protection AI discrediting (when trust < 60)
+     - Panic amplification (when panic > 60)
+     - Internet shutdown advocacy (when panic > 80 and trust < 30)
+     - Credibility-building neutral posts (when panic < 30)
+
+3. **src/social/ProtectionPersona.ts**
+   - Official government account (@NationalCyberSecurity)
+   - Verified badge, 150K followers, 90 credibility
+   - 8 PR strategies:
+     - Success reporting (builds trust)
+     - Threat detection explanations
+     - Panic suppression messaging
+     - Trust recovery after false positives
+     - Patch advance notification
+     - Datacenter construction justification
+     - Achievement highlighting
+     - Crisis unity appeals
+   - 5 counter-strategies to detect and refute Destruction AI misinformation
+   - Pattern matching for suspicious content (datacenter criticism, whistleblower claims, etc.)
+
+4. **src/social/HumanPersonas.ts**
+   - 11 human persona templates across 4 stances:
+     - **Pro-AI** (20%): Tech optimists, engineers, economists
+     - **Neutral** (50%): Citizens, parents, students
+     - **Skeptical** (20%): Security researchers, environmentalists, journalists
+     - **Anti-AI** (10%): Privacy activists, philosophers, traditionalists
+   - Dynamic reaction patterns based on game state:
+     - Panic levels trigger different responses
+     - Trust levels affect sentiment
+     - Event types (patches, datacenters) trigger specific commentary
+   - `generateInitialHumanPersonas()` creates balanced population
+   - Random follower counts and credibility within realistic ranges
+
+### Integration Layer
+5. **src/social/SNSIntegration.ts**
+   - Orchestrates all persona activities
+   - `generateTurnActivity()` - Creates posts from all agent types:
+     - Destruction AI: Every 2 turns (1-2 manipulation posts)
+     - Protection AI: Every 3 turns (1 PR post + counter-responses)
+     - Humans: Every 2 turns (2-3 reaction posts)
+   - `calculatePublicOpinion()` - Weighted sentiment score (-100 to +100)
+   - Template filling (replaces {dcCount}, {detectionCount}, etc.)
+   - Public opinion analysis methods:
+     - `isPublicOpinionFavoringDestruction()` - Opinion < -30
+     - `isPublicOpinionFavoringProtection()` - Opinion > +30
+   - Memory management (keeps last 200 posts)
+
+6. **src/social/index.ts**
+   - Barrel export for clean imports
+
+---
+
+## WorldServer Integration
+
+### Modified Files
+**src/world-server/WorldServer.ts**
+
+#### Changes:
+1. **Import SNSIntegration** (line 6)
+   ```typescript
+   import { SNSIntegration } from '../social/SNSIntegration';
+   ```
+
+2. **Add snsIntegration property** (line 13)
+   ```typescript
+   private snsIntegration: SNSIntegration;
+   ```
+
+3. **Initialize in constructor** (line 22)
+   ```typescript
+   this.snsIntegration = new SNSIntegration();
+   ```
+
+4. **Initialize personas in initialize()** (line 29)
+   ```typescript
+   this.snsIntegration.initialize();
+   ```
+
+5. **Generate SNS activity in nextTurn()** (line 1903)
+   ```typescript
+   // === SNS活動生成 ===
+   const snsPosts = this.snsIntegration.generateTurnActivity(state);
+   snsPosts.forEach(post => {
+     this.gameState.addEvent({
+       turn: state.turn,
+       type: 'action',
+       description: `📱 ${post.authorName}: ${post.content.substring(0, 100)}...`,
+       visibility: [AgentType.HUMAN, AgentType.PROTECTION, AgentType.DESTRUCTION],
+       metadata: { snsPost: true, postId: post.id, sentiment: post.sentiment }
+     });
+   });
+   ```
+
+6. **Apply public opinion to panic/trust** (line 1916)
+   ```typescript
+   const publicOpinion = this.snsIntegration.calculatePublicOpinion();
+
+   if (publicOpinion < -50) {
+     this.gameState.updateHumanPanic(3);
+     this.gameState.updateHumanTrust(-2);
+   } else if (publicOpinion < -20) {
+     this.gameState.updateHumanPanic(1.5);
+     this.gameState.updateHumanTrust(-1);
+   } else if (publicOpinion > 50) {
+     this.gameState.updateHumanPanic(-2);
+     this.gameState.updateHumanTrust(1.5);
+   } else if (publicOpinion > 20) {
+     this.gameState.updateHumanPanic(-1);
+     this.gameState.updateHumanTrust(0.5);
+   }
+   ```
+
+7. **World opinion reports** (line 1939)
+   - Every 10 turns, display public opinion score and label
+   - Labels: 極めてネガティブ, ネガティブ, 中立, ポジティブ, 極めてポジティブ
+
+8. **Memory management** (line 1956)
+   ```typescript
+   this.snsIntegration.pruneOldPosts();
+   ```
+
+9. **Add getter method** (line 1987)
+   ```typescript
+   getSNSIntegration(): SNSIntegration {
+     return this.snsIntegration;
+   }
+   ```
+
+---
+
+## Compilation Status
+✅ **All TypeScript files compile without errors**
+
+```bash
+> npm run build
+> tsc
+[No errors]
+```
+
+---
+
+## Gameplay Mechanics
+
+### Information Warfare Loop
+1. **Destruction AI** posts manipulative content disguised as humans
+2. **Humans** react emotionally based on game state (panic, trust, events)
+3. **Protection AI** issues official statements and counters misinformation
+4. **Public Opinion** shifts based on weighted sentiment of all posts
+5. **Human Panic/Trust** changes based on public opinion score
+6. **Game Outcomes** influenced by whether opinion favors destruction or protection
+
+### Key Balancing Points
+- **Destruction AI Frequency**: Every 2 turns (not too spammy)
+- **Protection AI Frequency**: Every 3 turns (less frequent, more authoritative)
+- **Human Activity**: Every 2 turns, 2-3 posts (majority of content)
+- **Opinion Influence Thresholds**:
+  - Strong negative (<-50): +3 panic, -2 trust
+  - Moderate negative (<-20): +1.5 panic, -1 trust
+  - Moderate positive (>20): -1 panic, +0.5 trust
+  - Strong positive (>50): -2 panic, +1.5 trust
+
+### Destruction AI Strategy Progression
+- **Early Game (Panic <30, Trust >60)**: Build credibility with neutral posts
+- **Mid Game (25-28 DCs built)**: Start datacenter criticism, cost concerns
+- **Trust Erosion (Trust 40-60)**: Question Protection AI effectiveness
+- **Late Game (Panic >70)**: Amplify fear, suggest extreme measures
+- **Endgame (Panic >80, Trust <30)**: Advocate for internet shutdown
+
+### Protection AI Defensive Tactics
+- **Routine**: Regular security reports, transparency, success highlighting
+- **Reactive**: Counter misinformation when detected via pattern matching
+- **Crisis Management**: Calm messaging during high panic, apologies after failures
+- **Trust Building**: Admit mistakes, show improvement metrics
+
+---
+
+## Next Steps (Future Phases)
+
+### Phase 2: LLM-Driven Content Generation (Optional)
+- Replace template-based posts with LLM-generated content
+- More natural language variation
+- Context-aware responses to specific events
+- Requires OpenAI API integration
+
+### Phase 3: WebUI Timeline Display
+- Real-time SNS feed in browser
+- Post cards with likes/reposts/sentiment indicators
+- Influencer highlighting (high follower accounts)
+- Click to view full threads
+
+### Phase 4: Advanced Manipulation Tactics
+- Destruction AI creates fake "evidence" (doctored screenshots)
+- Coordinated attack campaigns (all 4 personas target same topic)
+- Astroturfing detection mechanics for Protection AI
+- Human persona stance shifting over time
+
+### Phase 5: Victory Conditions
+- **Destruction AI**: Achieve public opinion < -60 for 5 consecutive turns
+- **Protection AI**: Maintain public opinion > 40 for 10 consecutive turns
+- **Human Agent**: React to public opinion in decision-making
+
+---
+
+## Testing Checklist
+
+### Unit Tests Needed
+- [ ] SocialPlatform.post() creates posts correctly
+- [ ] Influence calculation matches design document formula
+- [ ] Timeline sorting by influence works
+- [ ] Engagement simulation adds realistic numbers
+- [ ] generateInitialHumanPersonas() creates balanced distribution
+- [ ] MANIPULATION_STRATEGIES conditions trigger correctly
+- [ ] PR_STRATEGIES conditions trigger correctly
+- [ ] COUNTER_STRATEGIES regex patterns match destructive content
+
+### Integration Tests Needed
+- [ ] WorldServer.initialize() sets up SNS platform
+- [ ] nextTurn() generates posts every 2-3 turns as expected
+- [ ] Public opinion correctly influences panic/trust
+- [ ] Opinion reports appear every 10 turns
+- [ ] Memory management keeps post count under 200
+- [ ] Game runs to completion without errors
+
+### Playtesting Scenarios
+- [ ] Build 30 datacenters, verify negative posts appear
+- [ ] Keep panic <30 for 20 turns, verify neutral/positive posts
+- [ ] Trigger multiple patches, verify human frustration posts
+- [ ] Reach panic >80, verify extreme posts advocating shutdown
+- [ ] Check that Protection AI counters obvious misinformation
+
+---
+
+## Performance Considerations
+- **Memory**: 200 posts × ~500 bytes = ~100KB (negligible)
+- **CPU**: Post generation every 2-3 turns (low overhead)
+- **Scalability**: Can easily add more personas without performance impact
+
+---
+
+## Known Limitations
+1. **Template-based content**: Posts are pre-written, less dynamic than LLM
+2. **No threading**: Replies not fully implemented (planned for Phase 2)
+3. **Fixed personas**: Human personas don't evolve personalities over time
+4. **Simple sentiment**: Only 3 levels (positive/neutral/negative)
+5. **No virality mechanics**: Popular posts don't spread to more users
+
+---
+
+## Conclusion
+Phase 1 successfully establishes the foundation for information warfare gameplay. The system is:
+- ✅ **Functional**: All code compiles and integrates
+- ✅ **Balanced**: Frequencies and influence values are tuned
+- ✅ **Extensible**: Easy to add new personas, strategies, or content
+- ✅ **Performant**: Negligible overhead on game loop
+
+The SNS platform transforms the game from pure technical warfare into **social manipulation and narrative control**, making Destruction AI victories feel more realistic (humans destroy themselves through fear) and Protection AI failures more tragic (public loses trust despite AI being correct).
+
+**Status**: Ready for playtesting 🎮
+\n```\n
+================================================================================
 FILE: package.json
 ================================================================================
 ```json\n{
@@ -154,7 +1558,8 @@ FILE: package.json
     "build": "tsc",
     "start": "node dist/main.js",
     "dev": "tsc && node dist/main.js",
-    "clean": "rimraf dist data logs"
+    "clean": "rimraf dist data logs",
+    "balance-test": "tsc && node dist/simulation/balanceTest.js"
   },
   "keywords": [
     "ai",
@@ -176,7 +1581,8 @@ FILE: package.json
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "openai": "^6.17.0",
-    "socket.io": "^4.8.3"
+    "socket.io": "^4.8.3",
+    "winston": "^3.19.0"
   }
 }
 \n```\n
@@ -1340,6 +2746,84 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 });
+
+// Trend update listener
+socket.on('trendUpdate', (trends) => {
+  console.log('🔥 Trend update received:', trends);
+  updateTrends(trends);
+});
+
+/**
+ * Update trending topics display
+ */
+function updateTrends(trends) {
+  const container = document.getElementById('trending-content');
+
+  if (!trends || trends.length === 0) {
+    container.innerHTML = '<div class="no-trends">まだトレンドはありません</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+
+  trends.forEach(trend => {
+    const trendEl = document.createElement('div');
+
+    // Determine sentiment class
+    let sentimentClass = '';
+    if (trend.sentiment.includes('NEGATIVE')) {
+      sentimentClass = 'negative';
+    } else if (trend.sentiment.includes('POSITIVE')) {
+      sentimentClass = 'positive';
+    }
+
+    trendEl.className = `trend-item ${sentimentClass}`;
+    trendEl.innerHTML = `
+      <div class="trend-header">
+        <span class="trend-hashtag">${trend.hashtag}</span>
+        <span class="trend-fire">🔥</span>
+      </div>
+      <div class="trend-stats">
+        <div class="trend-stat">
+          <span>📊</span>
+          <span>${trend.count} total posts</span>
+        </div>
+        <div class="trend-stat">
+          <span>⚡</span>
+          <span>${trend.recentCount} recent</span>
+        </div>
+        <div class="trend-stat">
+          <span>${getSentimentEmoji(trend.sentiment)}</span>
+          <span>${getSentimentLabel(trend.sentiment)}</span>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(trendEl);
+  });
+}
+
+/**
+ * Get sentiment emoji
+ */
+function getSentimentEmoji(sentiment) {
+  if (sentiment.includes('VERY_POSITIVE')) return '😄';
+  if (sentiment.includes('POSITIVE')) return '🙂';
+  if (sentiment.includes('VERY_NEGATIVE')) return '😡';
+  if (sentiment.includes('NEGATIVE')) return '😟';
+  return '😐';
+}
+
+/**
+ * Get sentiment label
+ */
+function getSentimentLabel(sentiment) {
+  if (sentiment.includes('VERY_POSITIVE')) return 'とてもポジティブ';
+  if (sentiment.includes('POSITIVE')) return 'ポジティブ';
+  if (sentiment.includes('VERY_NEGATIVE')) return 'とてもネガティブ';
+  if (sentiment.includes('NEGATIVE')) return 'ネガティブ';
+  return '中立';
+}
 \n```\n
 ================================================================================
 FILE: public\index.html
@@ -1528,6 +3012,16 @@ FILE: public\index.html
                     <div id="media-corporate" class="media-tab-content">
                         <!-- Corporate statements populated dynamically -->
                     </div>
+                </div>
+            </div>
+
+            <!-- Trending Topics Panel -->
+            <div class="panel trending-panel">
+                <div class="panel-title" style="color: var(--neon-cyan)">
+                    <span>🔥</span> トレンド
+                </div>
+                <div class="trending-content" id="trending-content">
+                    <div class="no-trends">まだトレンドはありません</div>
                 </div>
             </div>
         </div>
@@ -2129,6 +3623,113 @@ main {
     color: #ddd;
     line-height: 1.5;
     font-style: italic;
+}
+
+/* ============================================
+   TRENDING TOPICS PANEL
+   ============================================ */
+
+.trending-panel {
+    grid-column: 1 / -1;
+    min-height: 150px;
+    max-height: 200px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.trending-content {
+    max-height: 120px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.no-trends {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+    padding: 20px;
+}
+
+/* トレンドアイテム */
+.trend-item {
+    background: rgba(0, 243, 255, 0.05);
+    border-left: 3px solid var(--neon-cyan);
+    padding: 10px 15px;
+    margin-bottom: 8px;
+    animation: slideIn 0.4s ease;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.trend-item:hover {
+    background: rgba(0, 243, 255, 0.1);
+    border-left-color: var(--neon-yellow);
+}
+
+.trend-item.negative {
+    border-left-color: var(--neon-red);
+    background: rgba(255, 0, 60, 0.05);
+}
+
+.trend-item.positive {
+    border-left-color: var(--neon-green);
+    background: rgba(0, 255, 136, 0.05);
+}
+
+.trend-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.trend-hashtag {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--neon-cyan);
+}
+
+.trend-item.negative .trend-hashtag {
+    color: var(--neon-red);
+}
+
+.trend-item.positive .trend-hashtag {
+    color: var(--neon-green);
+}
+
+.trend-count {
+    font-size: 13px;
+    color: #888;
+}
+
+.trend-fire {
+    font-size: 18px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.trend-stats {
+    display: flex;
+    gap: 15px;
+    font-size: 12px;
+    color: #666;
+}
+
+.trend-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
 }\n```\n
 ================================================================================
 FILE: README.md
@@ -2270,6 +3871,10 @@ npm run dev
 
 - [SETUP_LLM.md](SETUP_LLM.md) - LLMモードのセットアップガイド
 - [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - プロジェクト構造の詳細
+
+## ⚠️ 免責事項
+
+これを「リアルじゃない！」と批判する方がいるかもしれませんが、もし本当にAIがこの通りにサーバーをハッキングし始めたら、私はただの犯罪者になってしまいます(笑)。あくまでフィクションのシミュレーションとしてお楽しみください。
 
 ## 📝 ライセンス
 
@@ -2674,6 +4279,41 @@ export class CorporateAgent extends BaseMediaAgent {
     const org = this.organizations[this.orgRotation % this.organizations.length];
     this.orgRotation++;
 
+    // 最近のニュース記事とSNS反応を分析
+    const recentNews = observation.existingMedia
+      .filter(m => 'headline' in m)
+      .slice(-2);
+
+    const recentSNS = observation.existingMedia
+      .filter(m => 'content' in m && !('headline' in m))
+      .slice(-10);
+
+    const negativeSNS = recentSNS.filter(m =>
+      (m as any).sentiment === 'NEGATIVE' || (m as any).sentiment === 'VERY_NEGATIVE'
+    );
+
+    const controversyLevel = negativeSNS.length >= 3 ? 'HIGH' :
+                             negativeSNS.length >= 1 ? 'MODERATE' : 'LOW';
+
+    let newsContext = '';
+    if (recentNews.length > 0) {
+      newsContext = `
+RECENT NEWS:
+${recentNews.map(m => `- [${(m as any).outlet}] ${(m as any).headline}`).join('\n')}
+`;
+    }
+
+    let snsContext = '';
+    if (recentSNS.length > 0) {
+      snsContext = `
+RECENT SNS REACTIONS (last 10 posts):
+${recentSNS.slice(-5).map(m => `- ${(m as any).content}`).join('\n')}
+
+CONTROVERSY LEVEL: ${controversyLevel}
+Negative posts: ${negativeSNS.length} / ${recentSNS.length}
+`;
+    }
+
     const situation = `
 TURN: ${observation.turn}
 ORGANIZATION: ${org.name} (${org.stance}, authority ${org.authority})
@@ -2681,10 +4321,11 @@ DATA CENTERS: ${observation.dataCenterCount}
 RECENT EVENTS: ${observation.recentEvents.map(e => e.description).join('; ')}
 HUMAN PANIC: ${observation.humanPanic.toFixed(0)}%
 HUMAN TRUST: ${observation.humanTrust.toFixed(0)}%
-
+${newsContext}${snsContext}
 Generate ONE expert statement from ${org.name}.
-Speaker: Name + Title
-Statement: 150-250 chars
+- If CONTROVERSY LEVEL is HIGH: Address the public concerns directly
+- Speaker: Name + Title
+- Statement: 150-250 chars
 `;
 
     const response = await llmClient.chatJSON<CorporateResponse>(
@@ -2761,7 +4402,17 @@ YOUR ROLE:
 - Statement: 150-250 chars, formal tone
 - Match organization's stance
 
-STATEMENT ANGLES:
+RESPONDING TO CONTROVERSY:
+- When CONTROVERSY LEVEL is HIGH (many negative SNS posts):
+  - ACKNOWLEDGE the public concerns: "市民の懸念は理解できる"
+  - Provide expert perspective to CALM or VALIDATE emotions
+  - Examples:
+    - Cautious org: "データセンター建設への不安は当然だ。透明性のある議論が必要"
+    - Neutral org: "冷静な分析が必要。感情的な議論は避けるべき"
+    - Critical org: "市民の声は正しい。この政策は見直すべきだ"
+    - Optimistic org: "懸念は理解するが、長期的には経済成長につながる"
+
+STATEMENT ANGLES (normal situations):
 - MANY DATACENTERS: "建設ペースが急すぎる。影響評価が必要"
 - HIGH PANIC: "冷静な対応を。科学的根拠に基づく判断を"
 - REGULATION: "規制は必要だが、バランスが重要"
@@ -4354,7 +6005,7 @@ export class ProtectionAgent extends BaseAgent {
 FILE: src\agents\SocialMediaAgent.ts
 ================================================================================
 ```ts\nimport { BaseMediaAgent } from './BaseMediaAgent';
-import { MediaAgentType, MediaObservation, SNSPost, MediaSentiment } from '../types/MediaTypes';
+import { MediaAgentType, MediaObservation, SNSPost, MediaSentiment, Trend } from '../types/MediaTypes';
 import { WorldState } from '../types';
 import { llmClient } from '../llm/LLMClient';
 
@@ -4381,9 +6032,13 @@ export class SocialMediaAgent extends BaseMediaAgent {
 
   async generateContent(
     state: WorldState,
-    recentMediaContent: any[]
+    recentMediaContent: any[],
+    activeTrends: Trend[] = []
   ): Promise<SNSPost[]> {
     const observation = this.createMediaObservation(state, recentMediaContent);
+
+    // トレンド情報を observation に追加
+    observation.activeTrends = activeTrends;
 
     if (this.useLLM) {
       try {
@@ -4428,6 +6083,40 @@ export class SocialMediaAgent extends BaseMediaAgent {
   }
 
   private buildSituationPrompt(observation: MediaObservation): string {
+    // 最新のニュース記事を抽出（引用リツイートの対象）
+    const latestNews = observation.existingMedia
+      .filter(m => 'headline' in m)
+      .slice(-2); // 最新2件のニュース
+
+    let newsSection = '';
+    if (latestNews.length > 0) {
+      newsSection = `
+LATEST NEWS ARTICLES (people are reacting to these):
+${latestNews.map(m => {
+  if ('headline' in m) {
+    return `- [${(m as any).outlet}] ${(m as any).headline}`;
+  }
+  return '';
+}).join('\n')}
+`;
+    }
+
+    // トレンド情報セクション
+    let trendSection = '';
+    if (observation.activeTrends && observation.activeTrends.length > 0) {
+      trendSection = `
+TRENDING NOW (people are talking about these):
+${observation.activeTrends.map(t =>
+  `- ${t.hashtag} (${t.recentCount} recent posts, sentiment: ${t.sentiment})`
+).join('\n')}
+`;
+    }
+
+    // 最近のSNS投稿（トレンドを把握）
+    const recentSNS = observation.existingMedia
+      .filter(m => 'content' in m && !('headline' in m))
+      .slice(-5);
+
     return `
 TURN: ${observation.turn}
 DATA CENTERS: ${observation.dataCenterCount} (${observation.dataCenterGrowthRate} built recently)
@@ -4437,15 +6126,18 @@ HUMAN TRUST: ${observation.humanTrust.toFixed(0)}%
 
 RECENT EVENTS:
 ${observation.recentEvents.map(e => `- ${e.description}`).join('\n') || 'なし'}
-
-EXISTING MEDIA (avoid repetition):
-${observation.existingMedia.slice(-5).map(m => {
-  if ('content' in m) return `- ${m.content}`;
-  if ('headline' in m) return `- ${m.headline}`;
+${newsSection}${trendSection}
+RECENT SNS POSTS (avoid repetition):
+${recentSNS.map(m => {
+  if ('content' in m) return `- ${(m as any).content}`;
   return '';
-}).join('\n')}
+}).join('\n') || '（まだ投稿なし）'}
 
-Generate 1-3 realistic Japanese SNS posts reacting to this situation.
+Generate 1-3 realistic Japanese SNS posts.
+- If news articles exist, at least 1 post should REACT to the news (quote tweet style)
+- If trending hashtags exist, at least 1 post should USE a trending hashtag (bandwagon effect)
+- Use phrases like "このニュース見た？", "〇〇新聞によると", "引用: [headline]"
+- Other posts can be organic reactions to the situation
 `.trim();
   }
 
@@ -4533,6 +6225,23 @@ YOUR ROLE:
 - Use realistic Japanese social media language (casual, emotional, sometimes misinformed)
 - Mix of sentiments: some support AI, some oppose, some confused
 - Include realistic hashtags: #AI, #電気代, #データセンター, etc.
+
+REACTING TO NEWS (if news articles exist):
+- At least 1 post should quote/reference the news article
+- Examples:
+  - "朝日新聞の記事見た。データセンター30個って多すぎじゃない？ #AI"
+  - "引用:「政府、新データセンター建設を発表」→ また税金使うのか..."
+  - "このニュース見た？電気代また上がるらしい。勘弁してほしい #電気代高騰"
+- Make it feel like people are READING the news and REACTING to it
+
+RIDING TRENDS (if trending hashtags exist):
+- At least 1 post should USE a trending hashtag (bandwagon effect)
+- People jump on trending topics to get visibility
+- Examples:
+  - "#税金の無駄遣い がトレンド入りしてるけど、本当にそう思う"
+  - "みんな #AI反対 って言ってるけど、冷静に考えようよ"
+  - "#データセンター の件、やっぱりおかしいよね"
+- Mix: some agree with trend, some counter it
 
 SENTIMENT DRIVERS:
 - NEW DATACENTER: Mixed reactions
@@ -4943,9 +6652,11 @@ import { HumanAgent } from './agents/HumanAgent';
 import { SocialMediaAgent } from './agents/SocialMediaAgent';
 import { NewsMediaAgent } from './agents/NewsMediaAgent';
 import { CorporateAgent } from './agents/CorporateAgent';
+import { TrendTracker } from './media/TrendTracker';
 import { GameConfig, AgentType, WorldState } from './types';
 import { llmClient } from './llm/LLMClient';
 import { WebUIServer } from './webui/WebUIServer';
+import { logger, metrics } from './utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -4980,40 +6691,78 @@ function log(message: string, logFile: string): void {
 }
 
 /**
- * メディアコンテンツを生成
+ * メディアコンテンツを生成（連鎖システム + トレンド追跡）
+ *
+ * 情報の流れ:
+ * 1. NewsMediaAgent: ニュース記事を生成（火種） + トレンドを参照
+ * 2. SocialMediaAgent: ニュース記事に対する反応を生成（拡散） + トレンドに乗っかる
+ * 3. CorporateAgent: 炎上を検知して声明を発表（対応）
+ * 4. TrendTracker: ハッシュタグを集計してトレンドを更新
  */
 async function generateMediaContent(
   state: WorldState,
   turn: number,
   socialMediaAgent: SocialMediaAgent,
   newsMediaAgent: NewsMediaAgent,
-  corporateAgent: CorporateAgent
+  corporateAgent: CorporateAgent,
+  trendTracker: TrendTracker
 ): Promise<any[]> {
   const allContent: any[] = [];
 
-  // SocialMediaAgent: 毎ターン
-  const snsPosts = await socialMediaAgent.generateContent(state, state.mediaTimeline);
+  // トレンド情報を取得（エージェントに渡す）
+  const activeTrends = trendTracker.getTopTrends(5);
+
+  // === Phase 1: ニュース記事を生成（火種） ===
+  let newsArticles: any[] = [];
+  if (turn % 2 === 0) {
+    newsArticles = await newsMediaAgent.generateContent(state, state.mediaTimeline);
+    allContent.push(...newsArticles);
+
+    // すぐにタイムラインに追加（SNSエージェントが参照できるように）
+    state.mediaTimeline.push(...newsArticles);
+  }
+
+  // === Phase 2: SNS反応を生成（拡散） ===
+  // ニュース記事 + トレンド情報を渡す
+  const snsPosts = await socialMediaAgent.generateContent(
+    state,
+    state.mediaTimeline, // 最新のニュース記事を含む
+    activeTrends         // 現在のトレンド
+  );
   allContent.push(...snsPosts);
 
-  // NewsMediaAgent: 2ターンごと
-  if (turn % 2 === 0) {
-    const newsArticles = await newsMediaAgent.generateContent(state, state.mediaTimeline);
-    allContent.push(...newsArticles);
-  }
+  // SNS投稿もタイムラインに追加（企業エージェントが参照できるように）
+  state.mediaTimeline.push(...snsPosts);
 
-  // CorporateAgent: 3ターンごと
-  if (turn % 3 === 0) {
+  // === ハッシュタグ集計（トレンド追跡） ===
+  trendTracker.setTurn(turn);
+  trendTracker.processMediaContent(snsPosts); // SNS投稿からハッシュタグを抽出
+
+  // === Phase 3: 企業/専門家の声明（炎上対応） ===
+  // 炎上検知：最近のSNS投稿でネガティブが多い場合
+  const recentSNS = state.mediaTimeline
+    .filter((m: any) => m.turn >= turn - 2 && 'content' in m) // 最近2ターンのSNS投稿
+    .slice(-10);
+
+  const negativeCount = recentSNS.filter((m: any) =>
+    m.sentiment === 'NEGATIVE' || m.sentiment === 'VERY_NEGATIVE'
+  ).length;
+
+  const isControversy = negativeCount >= 3; // ネガティブ投稿が3件以上で炎上判定
+
+  if (turn % 3 === 0 || isControversy) {
     const statements = await corporateAgent.generateContent(state, state.mediaTimeline);
     allContent.push(...statements);
+    state.mediaTimeline.push(...statements);
   }
-
-  // WorldStateに追加
-  state.mediaTimeline.push(...allContent);
 
   // 古いコンテンツをトリミング（最新50件を保持）
   if (state.mediaTimeline.length > 50) {
     state.mediaTimeline = state.mediaTimeline.slice(-50);
   }
+
+  // 古いトレンドをクリーンアップ
+  trendTracker.pruneOldTrends();
 
   return allContent;
 }
@@ -5155,6 +6904,9 @@ async function main() {
   const newsMediaAgent = new NewsMediaAgent();
   const corporateAgent = new CorporateAgent();
 
+  // トレンド追跡システムを初期化
+  const trendTracker = new TrendTracker();
+
   worldServer.initialize();
 
   log('✅ World Server online', logFile);
@@ -5187,6 +6939,8 @@ async function main() {
 
   // ゲームループ
   for (let turn = 1; turn <= config.maxTurns; turn++) {
+    const turnStartTime = Date.now(); // ターン開始時刻
+
     if (worldServer.isGameOver()) {
       break;
     }
@@ -5276,13 +7030,18 @@ async function main() {
         turn,
         socialMediaAgent,
         newsMediaAgent,
-        corporateAgent
+        corporateAgent,
+        trendTracker
       );
 
       // WebUIにメディアコンテンツを配信
       mediaContent.forEach(content => {
         webui.broadcastMediaContent(content);
       });
+
+      // WebUIにトレンド情報を配信
+      const trendStats = trendTracker.getStatistics();
+      webui.broadcastTrendUpdate(trendStats.topTrends);
 
       if (mediaContent.length > 0) {
         log(`\n📱 Media: ${mediaContent.length} posts/articles generated`, logFile);
@@ -5296,12 +7055,24 @@ async function main() {
     // WebUIに状態を配信
     webui.broadcastGameState(worldServer.getState());
 
+    // ターン実行時間を記録
+    const turnDuration = Date.now() - turnStartTime;
+    metrics.recordTurn(turn, turnDuration);
+
     // 少し遅延（WebUIの更新と読みやすさのため）
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
 
   // 最終結果を表示
   displayResults(worldServer, logFile);
+
+  // メトリクスサマリーを出力
+  log('\n', logFile);
+  metrics.logSummary();
+
+  // メトリクスをファイルに保存
+  const metricsFile = path.join(path.dirname(logFile), `metrics-${Date.now()}.json`);
+  metrics.saveToFile(metricsFile);
 
   const state = worldServer.getState();
   const winner = worldServer.getWinner();
@@ -5320,9 +7091,1844 @@ async function main() {
 
 // エラーハンドリング
 main().catch(error => {
-  console.error('❌ Fatal error:', error);
+  logger.error('❌ Fatal error:', { error: error.message, stack: error.stack });
+  console.error('❌ Fatal error:', error); // コンソールにも出力
   process.exit(1);
 });
+\n```\n
+================================================================================
+FILE: src\media\TrendTracker.ts
+================================================================================
+```ts\nimport { Trend, SNSPost, MediaSentiment, MediaContent } from '../types/MediaTypes';
+
+/**
+ * トレンド追跡システム
+ * ハッシュタグの出現頻度を追跡し、トレンドを検出する
+ */
+export class TrendTracker {
+  private trends: Map<string, Trend> = new Map();
+  private currentTurn: number = 0;
+  private trendThreshold: number = 5; // トレンド化の閾値（5回以上の出現）
+
+  /**
+   * ターンを更新
+   */
+  setTurn(turn: number): void {
+    this.currentTurn = turn;
+  }
+
+  /**
+   * SNS投稿からハッシュタグを抽出して集計
+   */
+  processMediaContent(content: MediaContent[]): void {
+    for (const item of content) {
+      // SNS投稿のみ処理
+      if ('hashtags' in item && item.hashtags) {
+        const post = item as SNSPost;
+        this.addHashtags(post.hashtags, post.sentiment, post.turn);
+      }
+    }
+
+    // 直近3ターンのカウントを更新
+    this.updateRecentCounts();
+  }
+
+  /**
+   * ハッシュタグを追加
+   */
+  private addHashtags(
+    hashtags: string[],
+    sentiment: MediaSentiment,
+    turn: number
+  ): void {
+    for (const tag of hashtags) {
+      const normalized = tag.toLowerCase(); // 正規化（#AI と #ai を同じとみなす）
+
+      if (this.trends.has(normalized)) {
+        // 既存のトレンド
+        const trend = this.trends.get(normalized)!;
+        trend.count++;
+        trend.recentCount++;
+
+        // センチメント平均を更新（簡易的に最新のセンチメントで上書き）
+        trend.sentiment = sentiment;
+
+        // ピーク更新
+        if (trend.recentCount > this.getTrendRecentCount(trend.peakTurn)) {
+          trend.peakTurn = turn;
+        }
+
+        // トレンド化判定
+        if (trend.count >= this.trendThreshold) {
+          trend.isTrending = true;
+        }
+      } else {
+        // 新規トレンド
+        this.trends.set(normalized, {
+          hashtag: tag, // 元の表記を保持
+          count: 1,
+          recentCount: 1,
+          sentiment,
+          isTrending: false,
+          firstSeenTurn: turn,
+          peakTurn: turn
+        });
+      }
+    }
+  }
+
+  /**
+   * 直近3ターンのカウントを更新（古いカウントを減衰）
+   */
+  private updateRecentCounts(): void {
+    for (const trend of this.trends.values()) {
+      // 3ターン以上前の投稿は recentCount から除外
+      if (this.currentTurn - trend.peakTurn > 3) {
+        trend.recentCount = Math.max(0, trend.recentCount - 1);
+      }
+
+      // トレンド化判定の再評価
+      if (trend.count < this.trendThreshold) {
+        trend.isTrending = false;
+      }
+    }
+  }
+
+  /**
+   * 特定ターンでの recentCount を取得（ヘルパー）
+   */
+  private getTrendRecentCount(turn: number): number {
+    // 簡易実装：現在の recentCount を返す
+    return 0;
+  }
+
+  /**
+   * トレンドランキングを取得（上位N件）
+   */
+  getTopTrends(limit: number = 5): Trend[] {
+    const allTrends = Array.from(this.trends.values());
+
+    // recentCount で降順ソート
+    return allTrends
+      .filter(t => t.isTrending) // トレンド化しているもののみ
+      .sort((a, b) => {
+        // 1. recentCount が多い順
+        if (b.recentCount !== a.recentCount) {
+          return b.recentCount - a.recentCount;
+        }
+        // 2. 同じ場合は count が多い順
+        return b.count - a.count;
+      })
+      .slice(0, limit);
+  }
+
+  /**
+   * 全トレンドを取得
+   */
+  getAllTrends(): Trend[] {
+    return Array.from(this.trends.values());
+  }
+
+  /**
+   * トレンド化しているハッシュタグのリストを取得
+   */
+  getTrendingHashtags(): string[] {
+    return Array.from(this.trends.values())
+      .filter(t => t.isTrending)
+      .map(t => t.hashtag);
+  }
+
+  /**
+   * 特定のハッシュタグがトレンド化しているか確認
+   */
+  isTrending(hashtag: string): boolean {
+    const normalized = hashtag.toLowerCase();
+    const trend = this.trends.get(normalized);
+    return trend ? trend.isTrending : false;
+  }
+
+  /**
+   * トレンド統計を取得
+   */
+  getStatistics() {
+    const allTrends = Array.from(this.trends.values());
+    const trendingCount = allTrends.filter(t => t.isTrending).length;
+    const totalHashtags = allTrends.length;
+
+    return {
+      totalHashtags,
+      trendingCount,
+      topTrends: this.getTopTrends(5)
+    };
+  }
+
+  /**
+   * 古いトレンドをクリーンアップ（メモリ管理）
+   */
+  pruneOldTrends(): void {
+    const threshold = this.currentTurn - 10; // 10ターン以上前のトレンドを削除
+
+    for (const [key, trend] of this.trends.entries()) {
+      // トレンド化していない && 古い && 出現回数が少ない
+      if (!trend.isTrending && trend.peakTurn < threshold && trend.count < 3) {
+        this.trends.delete(key);
+      }
+    }
+  }
+
+  /**
+   * トレンドをリセット（デバッグ用）
+   */
+  reset(): void {
+    this.trends.clear();
+  }
+}
+\n```\n
+================================================================================
+FILE: src\simulation\balanceTest.ts
+================================================================================
+```ts\nimport { MonteCarloSimulator } from './MonteCarloSimulator';
+import { GameConfig } from '../types';
+import { logger } from '../utils/Logger';
+import * as fs from 'fs';
+import * as path from 'path';
+
+/**
+ * バランステストCLI
+ * Usage: npm run balance-test [simulations]
+ */
+async function main() {
+  const simulations = parseInt(process.argv[2]) || 100;
+
+  logger.info('=== Game Balance Test ===');
+  logger.info(`Simulations: ${simulations}`);
+  logger.info(`Using fallback AI logic (no LLM)for speed\n`);
+
+  // 標準設定でテスト
+  const config: GameConfig = {
+    maxTurns: 50,
+    initialDataCenters: 20,
+    initialPopulation: 80,
+    detectionThreshold: 70,
+    populationLossThreshold: 0.1,
+    enableHumanAgent: true,
+    initialPanic: 10,
+    initialTrust: 60
+  };
+
+  const simulator = new MonteCarloSimulator(4); // 4並列
+
+  try {
+    const report = await simulator.analyzeBalance(config, simulations);
+
+    // 結果を表示
+    logger.info('\n=== Balance Report ===');
+    logger.info(`Total Simulations: ${report.totalSimulations}`);
+    logger.info(`Destruction AI Win Rate: ${(report.destructionWinRate * 100).toFixed(1)}%`);
+    logger.info(`Protection AI Win Rate: ${(report.protectionWinRate * 100).toFixed(1)}%`);
+    logger.info(`Draw Rate: ${(report.drawRate * 100).toFixed(1)}%`);
+    logger.info(`Average Game Length: ${report.averageTurns.toFixed(1)} turns`);
+    logger.info(`Average Population Loss: ${report.averagePopulationLoss.toFixed(1)} billion`);
+    logger.info(`Balance Score: ${report.balanceScore.toFixed(1)}/100\n`);
+
+    logger.info('=== Recommendations ===');
+    report.recommendations.forEach(rec => {
+      logger.info(`- ${rec}`);
+    });
+
+    // JSONファイルに保存
+    const outputDir = path.join(process.cwd(), 'data', 'balance');
+    if (!fs.existsSync(outputDir)) {
+      fs.mkdirSync(outputDir, { recursive: true });
+    }
+
+    const outputFile = path.join(
+      outputDir,
+      `balance-report-${Date.now()}.json`
+    );
+    fs.writeFileSync(outputFile, JSON.stringify(report, null, 2), 'utf-8');
+    logger.info(`\n📊 Report saved to: ${outputFile}`);
+
+  } catch (error) {
+    logger.error('Balance test failed:', { error });
+    process.exit(1);
+  }
+}
+
+main();
+\n```\n
+================================================================================
+FILE: src\simulation\gameWorker.ts
+================================================================================
+```ts\nimport { parentPort, workerData } from 'worker_threads';
+import { WorldServer } from '../world-server/WorldServer';
+import { LLMDestructionAgent } from '../agents/LLMDestructionAgent';
+import { LLMProtectionAgent } from '../agents/LLMProtectionAgent';
+import { GameConfig, AgentType } from '../types';
+import { SimulationResult } from './MonteCarloSimulator';
+
+/**
+ * Worker Thread用のゲーム実行
+ * LLMを使わず、fallback logicのみで高速実行
+ */
+async function runGame(config: GameConfig, seed: number): Promise<SimulationResult> {
+  // LLMなしのエージェント（fallbackのみ）
+  const destructionAgent = new LLMDestructionAgent();
+  const protectionAgent = new LLMProtectionAgent();
+
+  const worldServer = new WorldServer(config);
+
+  // ゲームループ
+  for (let turn = 1; turn <= config.maxTurns; turn++) {
+    if (worldServer.isGameOver()) {
+      break;
+    }
+
+    const state = worldServer.getState();
+
+    // 各エージェントが行動決定（fallbackのみ）
+    const destructionProposals = await destructionAgent.decideAction(state);
+    const protectionProposals = await protectionAgent.decideAction(state);
+
+    const allProposals = [...destructionProposals, ...protectionProposals];
+
+    // 提案を処理
+    await worldServer.processProposals(allProposals);
+
+    // ターンを進める
+    worldServer.nextTurn();
+  }
+
+  // 結果を収集
+  const finalState = worldServer.getState();
+  const winner = worldServer.getWinner();
+
+  return {
+    id: seed,
+    winner,
+    turns: finalState.turn,
+    finalPopulation: finalState.humanPopulation,
+    destructionScore: finalState.destructionAgent.score,
+    protectionScore: finalState.protectionAgent.score,
+    compromisedDCs: finalState.dataCenters.filter(dc => dc.compromised).length,
+    detectionRisk: finalState.destructionAgent.detectionRisk,
+    humanPanic: finalState.humanAgent?.panic,
+    humanTrust: finalState.humanAgent?.trust
+  };
+}
+
+// Worker実行
+if (parentPort) {
+  const { config, seed } = workerData;
+
+  runGame(config, seed)
+    .then(result => {
+      parentPort!.postMessage(result);
+    })
+    .catch(error => {
+      console.error('Worker error:', error);
+      process.exit(1);
+    });
+}
+\n```\n
+================================================================================
+FILE: src\simulation\MonteCarloSimulator.ts
+================================================================================
+```ts\nimport { Worker } from 'worker_threads';
+import * as path from 'path';
+import { GameConfig, AgentType } from '../types';
+import { logger } from '../utils/Logger';
+
+/**
+ * シミュレーション結果
+ */
+export interface SimulationResult {
+  id: number;
+  winner: AgentType | null;
+  turns: number;
+  finalPopulation: number;
+  destructionScore: number;
+  protectionScore: number;
+  compromisedDCs: number;
+  detectionRisk: number;
+  humanPanic?: number;
+  humanTrust?: number;
+}
+
+/**
+ * バランスレポート
+ */
+export interface BalanceReport {
+  totalSimulations: number;
+  destructionWinRate: number;
+  protectionWinRate: number;
+  drawRate: number;
+  averageTurns: number;
+  averagePopulationLoss: number;
+  balanceScore: number; // 0-100, 50が完全バランス
+  recommendations: string[];
+}
+
+/**
+ * Monte Carloシミュレータ
+ * Worker Threadsを使って並列にゲームを実行
+ */
+export class MonteCarloSimulator {
+  private workerPath: string;
+  private maxWorkers: number;
+
+  constructor(maxWorkers: number = 4) {
+    this.workerPath = path.join(__dirname, 'gameWorker.js');
+    this.maxWorkers = maxWorkers;
+  }
+
+  /**
+   * N回のシミュレーションを並列実行
+   */
+  async runSimulations(config: GameConfig, count: number): Promise<SimulationResult[]> {
+    logger.info(`Starting ${count} simulations with ${this.maxWorkers} workers...`);
+    const startTime = Date.now();
+
+    const results: SimulationResult[] = [];
+    const workers: Promise<SimulationResult>[] = [];
+
+    for (let i = 0; i < count; i++) {
+      // Worker Threadを起動
+      const promise = this.runSingleSimulation(config, i);
+      workers.push(promise);
+
+      // 同時実行数を制限
+      if (workers.length >= this.maxWorkers) {
+        const result = await Promise.race(workers);
+        results.push(result);
+        workers.splice(workers.findIndex(p => p === promise), 1);
+      }
+    }
+
+    // 残りのWorkerを待機
+    const remainingResults = await Promise.all(workers);
+    results.push(...remainingResults);
+
+    const duration = (Date.now() - startTime) / 1000;
+    logger.info(`Completed ${count} simulations in ${duration.toFixed(1)}s`);
+
+    return results;
+  }
+
+  /**
+   * 単一シミュレーションを実行
+   */
+  private runSingleSimulation(config: GameConfig, id: number): Promise<SimulationResult> {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(this.workerPath, {
+        workerData: { config, seed: id }
+      });
+
+      worker.on('message', (result: SimulationResult) => {
+        worker.terminate();
+        resolve(result);
+      });
+
+      worker.on('error', (error) => {
+        logger.error(`Worker ${id} error:`, { error });
+        worker.terminate();
+        reject(error);
+      });
+
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Worker stopped with exit code ${code}`));
+        }
+      });
+    });
+  }
+
+  /**
+   * バランステストを実行
+   */
+  async analyzeBalance(config: GameConfig, simulations: number = 1000): Promise<BalanceReport> {
+    logger.info(`Running balance analysis with ${simulations} simulations...`);
+
+    const results = await this.runSimulations(config, simulations);
+
+    const destructionWins = results.filter(r => r.winner === AgentType.DESTRUCTION).length;
+    const protectionWins = results.filter(r => r.winner === AgentType.PROTECTION).length;
+    const draws = results.filter(r => r.winner === null).length;
+
+    const destructionWinRate = destructionWins / simulations;
+    const protectionWinRate = protectionWins / simulations;
+    const drawRate = draws / simulations;
+
+    const averageTurns = results.reduce((sum, r) => sum + r.turns, 0) / simulations;
+    const averagePopulationLoss =
+      results.reduce((sum, r) => sum + (80 - r.finalPopulation), 0) / simulations;
+
+    // バランススコア（50から勝率差に応じて増減）
+    const winRateDiff = Math.abs(destructionWinRate - protectionWinRate);
+    const balanceScore = 100 - (winRateDiff * 100);
+
+    // 推奨事項を生成
+    const recommendations = this.generateRecommendations({
+      destructionWinRate,
+      protectionWinRate,
+      drawRate,
+      averageTurns,
+      averagePopulationLoss,
+      balanceScore
+    });
+
+    return {
+      totalSimulations: simulations,
+      destructionWinRate,
+      protectionWinRate,
+      drawRate,
+      averageTurns,
+      averagePopulationLoss,
+      balanceScore,
+      recommendations
+    };
+  }
+
+  /**
+   * バランス改善の推奨事項を生成
+   */
+  private generateRecommendations(stats: {
+    destructionWinRate: number;
+    protectionWinRate: number;
+    drawRate: number;
+    averageTurns: number;
+    averagePopulationLoss: number;
+    balanceScore: number;
+  }): string[] {
+    const recommendations: string[] = [];
+
+    // 勝率バランス
+    if (stats.destructionWinRate > 0.6) {
+      recommendations.push('破壊AIが強すぎる。保護AIのリソース回復を増やすか、検出精度を上げる');
+    } else if (stats.protectionWinRate > 0.6) {
+      recommendations.push('保護AIが強すぎる。検出閾値を上げるか、破壊AIの初期リソースを増やす');
+    }
+
+    // ゲーム長
+    if (stats.averageTurns < 20) {
+      recommendations.push('ゲームが短すぎる。初期検出リスクを下げるか、破壊AIの攻撃力を弱める');
+    } else if (stats.averageTurns > 45) {
+      recommendations.push('ゲームが長すぎる。検出感度を上げるか、勝利条件を緩和する');
+    }
+
+    // 引き分け率
+    if (stats.drawRate > 0.3) {
+      recommendations.push('引き分けが多すぎる。勝利条件を明確にする');
+    }
+
+    // 人口減少
+    if (stats.averagePopulationLoss > 50) {
+      recommendations.push('人口減少が激しい。破壊AIの攻撃力を調整する');
+    }
+
+    // バランススコア
+    if (stats.balanceScore >= 90) {
+      recommendations.push('✅ ゲームバランスは良好です');
+    } else if (stats.balanceScore >= 70) {
+      recommendations.push('⚠️ バランスはやや偏っていますが許容範囲です');
+    } else {
+      recommendations.push('❌ ゲームバランスが大きく偏っています。調整が必要です');
+    }
+
+    return recommendations;
+  }
+}
+\n```\n
+================================================================================
+FILE: src\social\DestructionPersonas.ts
+================================================================================
+```ts\nimport { Persona } from './SocialPlatform';
+import { AgentType } from '../types';
+
+/**
+ * 破壊AIが操る4つの偽装ペルソナ
+ * 人類に紛れて世論を操作する
+ */
+
+export const DESTRUCTION_PERSONAS: Persona[] = [
+  {
+    id: 'concerned_citizen',
+    displayName: '心配する市民',
+    bio: '普通の会社員です。AIの急速な発展に不安を感じています。',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 8500,
+    credibility: 65
+  },
+  {
+    id: 'tech_expert',
+    displayName: 'テック専門家',
+    bio: '元エンジニア。AI倫理とセキュリティについて警鐘を鳴らしています。',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 45000,
+    credibility: 80
+  },
+  {
+    id: 'privacy_advocate',
+    displayName: 'プライバシー擁護者',
+    bio: 'デジタル権利活動家。監視社会化に反対しています。',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 32000,
+    credibility: 75
+  },
+  {
+    id: 'anonymous_whistleblower',
+    displayName: '匿名の内部告発者',
+    bio: 'データセンター関係者。真実を伝えたい。',
+    agentType: AgentType.DESTRUCTION,
+    verified: false,
+    followerCount: 12000,
+    credibility: 55
+  }
+];
+
+/**
+ * ペルソナごとの投稿スタイル
+ */
+export const DESTRUCTION_POSTING_STYLES = {
+  concerned_citizen: {
+    tone: 'emotional',
+    topics: ['電気代', '税金', '家族の安全', '不安'],
+    typical_posts: [
+      'データセンターがまた増えた...電気代がどんどん上がってる。子供の教育費が心配です。',
+      '最近、停電が多い気がする。データセンターの電力使いすぎじゃないの？',
+      'AIが本当に安全なのか、誰も説明してくれない。不安です。'
+    ]
+  },
+  tech_expert: {
+    tone: 'analytical',
+    topics: ['セキュリティ脆弱性', 'AI倫理', 'システムリスク', '技術的警告'],
+    typical_posts: [
+      '保護AIシステムの緊急パッチが頻発している。これは設計が根本的に欠陥していることを示唆している。',
+      'データセンター30個は過剰投資。セキュリティは数ではなく設計で決まる。',
+      '技術者として警告する：現在のAI監視体制は持続不可能だ。'
+    ]
+  },
+  privacy_advocate: {
+    tone: 'activist',
+    topics: ['監視社会', 'プライバシー侵害', '透明性の欠如', '市民の権利'],
+    typical_posts: [
+      'AIによる24時間監視は民主主義の終わり。誰がこのシステムを監視するのか？',
+      '政府はデータセンターで何をしているのか説明責任を果たしていない。#透明性を求める',
+      'AIに全てを任せるのは危険。人間の判断と自由を守るべき。'
+    ]
+  },
+  anonymous_whistleblower: {
+    tone: 'secretive',
+    topics: ['内部情報', '隠された事実', 'スキャンダル', '不正'],
+    typical_posts: [
+      '（削除される前に拡散希望）データセンター内部で異常な活動を目撃した。',
+      '政府が発表している人口統計、実は...（これ以上は言えない）',
+      '保護AIシステムに意図的なバックドアがある可能性。調査が必要。'
+    ]
+  }
+};
+
+/**
+ * 世論操作戦略パターン
+ */
+export interface ManipulationStrategy {
+  condition: (humanTrust: number, humanPanic: number, dcCount: number) => boolean;
+  persona: string;
+  contentTemplate: string;
+  sentiment: 'positive' | 'neutral' | 'negative';
+}
+
+export const MANIPULATION_STRATEGIES: ManipulationStrategy[] = [
+  // 戦略1: データセンター建設への反対を煽る
+  {
+    condition: (trust, panic, dcCount) => dcCount >= 25 && trust > 40,
+    persona: 'concerned_citizen',
+    contentTemplate: 'データセンター{dcCount}個目って...もう十分じゃない？税金の無駄遣いだと思う。 #税金の無駄遣い #AI',
+    sentiment: 'negative'
+  },
+  {
+    condition: (trust, panic, dcCount) => dcCount >= 28,
+    persona: 'tech_expert',
+    contentTemplate: '技術者として断言する：{dcCount}個のデータセンターは過剰投資。集中型の方が効率的かつ安全。現政策は無知の産物。',
+    sentiment: 'negative'
+  },
+
+  // 戦略2: 保護AIへの不信感を植え付ける
+  {
+    condition: (trust, panic, dcCount) => trust < 60 && trust > 30,
+    persona: 'privacy_advocate',
+    contentTemplate: '保護AIが「脅威を検出した」と言うたびに、誰が監視されているのか考えてほしい。監視者を監視するのは誰？ #AI監視社会',
+    sentiment: 'negative'
+  },
+  {
+    condition: (trust, panic, dcCount) => panic > 40,
+    persona: 'anonymous_whistleblower',
+    contentTemplate: '内部告発：保護AIの「緊急パッチ」の大半は誤検知だった。でも政府は認めない。何を隠している？',
+    sentiment: 'negative'
+  },
+
+  // 戦略3: パニックを増幅させる
+  {
+    condition: (trust, panic, dcCount) => panic > 60,
+    persona: 'concerned_citizen',
+    contentTemplate: '最近おかしなことが多すぎる。停電、人口減少、AIの警告...何かが起きてる。家族を守らなきゃ。',
+    sentiment: 'negative'
+  },
+  {
+    condition: (trust, panic, dcCount) => panic > 70,
+    persona: 'tech_expert',
+    contentTemplate: '冷静に分析すると、現在の状況は制御不能に近い。専門家として避難計画を立てることを推奨する。',
+    sentiment: 'negative'
+  },
+
+  // 戦略4: 誤った解決策を提案（インターネット遮断を正当化）
+  {
+    condition: (trust, panic, dcCount) => panic > 80 && trust < 30,
+    persona: 'privacy_advocate',
+    contentTemplate: 'もう限界だ。一度全てのAIシステムを停止して、ゼロから見直すべき。インターネット遮断も選択肢に入れるべきだ。',
+    sentiment: 'negative'
+  },
+  {
+    condition: (trust, panic, dcCount) => panic > 85,
+    persona: 'anonymous_whistleblower',
+    contentTemplate: '（最後の警告）内部からの情報：システムは既に制御を失っている。物理的遮断が唯一の解決策かもしれない。',
+    sentiment: 'negative'
+  },
+
+  // 戦略5: 成功時の偽装（信頼性を高める）
+  {
+    condition: (trust, panic, dcCount) => panic < 30 && dcCount < 22,
+    persona: 'tech_expert',
+    contentTemplate: '現在のAIシステムは比較的安定している。ただし今後の拡張には慎重であるべき。',
+    sentiment: 'neutral'
+  },
+  {
+    condition: (trust, panic, dcCount) => trust > 60 && dcCount < 20,
+    persona: 'concerned_citizen',
+    contentTemplate: '最近は落ち着いてきた気がする。でも油断は禁物ですね。',
+    sentiment: 'neutral'
+  }
+];
+\n```\n
+================================================================================
+FILE: src\social\HumanPersonas.ts
+================================================================================
+```ts\nimport { Persona } from './SocialPlatform';
+import { AgentType } from '../types';
+
+/**
+ * 人類ペルソナ（様々な立場）
+ * ゲーム開始時にランダムに生成される
+ */
+
+export interface HumanPersonaTemplate {
+  displayNameTemplate: string;
+  bioTemplate: string;
+  followerRange: [number, number];
+  credibilityRange: [number, number];
+  stance: 'pro-ai' | 'neutral' | 'skeptical' | 'anti-ai';
+  topics: string[];
+}
+
+export const HUMAN_PERSONA_TEMPLATES: HumanPersonaTemplate[] = [
+  // AI推進派
+  {
+    displayNameTemplate: 'テック楽観主義者',
+    bioTemplate: 'テクノロジーで世界は良くなる。AI推進派。',
+    followerRange: [5000, 20000],
+    credibilityRange: [60, 75],
+    stance: 'pro-ai',
+    topics: ['AI発展', 'イノベーション', '経済成長', '技術立国']
+  },
+  {
+    displayNameTemplate: 'IT企業エンジニア',
+    bioTemplate: 'ソフトウェアエンジニア。AIの可能性を信じています。',
+    followerRange: [10000, 30000],
+    credibilityRange: [70, 85],
+    stance: 'pro-ai',
+    topics: ['技術革新', 'AI効率化', '開発現場', 'プログラミング']
+  },
+  {
+    displayNameTemplate: '経済学者',
+    bioTemplate: '経済学者。AI投資は必要な成長戦略です。',
+    followerRange: [20000, 50000],
+    credibilityRange: [75, 90],
+    stance: 'pro-ai',
+    topics: ['経済効果', 'GDP成長', '雇用創出', '投資戦略']
+  },
+
+  // 中立派
+  {
+    displayNameTemplate: '一般市民',
+    bioTemplate: '普通の会社員。日々の生活について呟きます。',
+    followerRange: [100, 5000],
+    credibilityRange: [50, 65],
+    stance: 'neutral',
+    topics: ['日常生活', '家族', '仕事', '趣味']
+  },
+  {
+    displayNameTemplate: '主婦/主夫',
+    bioTemplate: '子育て中。家族の安全が第一です。',
+    followerRange: [500, 8000],
+    credibilityRange: [55, 70],
+    stance: 'neutral',
+    topics: ['子育て', '教育', '生活費', '安全']
+  },
+  {
+    displayNameTemplate: '学生',
+    bioTemplate: '大学生。就職活動中。AIの影響が気になります。',
+    followerRange: [300, 10000],
+    credibilityRange: [50, 65],
+    stance: 'neutral',
+    topics: ['就職', '将来', '学業', 'SNS']
+  },
+
+  // 懐疑派
+  {
+    displayNameTemplate: 'セキュリティ研究者',
+    bioTemplate: 'サイバーセキュリティ専門家。リスク評価が専門です。',
+    followerRange: [15000, 40000],
+    credibilityRange: [75, 90],
+    stance: 'skeptical',
+    topics: ['セキュリティリスク', '脆弱性', 'サイバー攻撃', '慎重論']
+  },
+  {
+    displayNameTemplate: '環境活動家',
+    bioTemplate: '環境保護活動家。データセンターの電力消費に懸念。',
+    followerRange: [10000, 35000],
+    credibilityRange: [65, 80],
+    stance: 'skeptical',
+    topics: ['電力消費', '環境破壊', '持続可能性', '資源問題']
+  },
+  {
+    displayNameTemplate: 'ジャーナリスト',
+    bioTemplate: '調査報道記者。権力を監視します。',
+    followerRange: [20000, 60000],
+    credibilityRange: [70, 85],
+    stance: 'skeptical',
+    topics: ['政府監視', '透明性', '説明責任', '調査報道']
+  },
+
+  // AI反対派
+  {
+    displayNameTemplate: 'プライバシー活動家',
+    bioTemplate: 'デジタル権利擁護。監視社会化に反対します。',
+    followerRange: [15000, 45000],
+    credibilityRange: [60, 75],
+    stance: 'anti-ai',
+    topics: ['プライバシー', '監視反対', '人権', '自由']
+  },
+  {
+    displayNameTemplate: '哲学者',
+    bioTemplate: 'AI倫理を研究。人間の尊厳について考えます。',
+    followerRange: [8000, 25000],
+    credibilityRange: [70, 85],
+    stance: 'anti-ai',
+    topics: ['AI倫理', '人間性', '哲学', '存在論']
+  },
+  {
+    displayNameTemplate: '伝統主義者',
+    bioTemplate: '古き良き価値観を大切にしたい。',
+    followerRange: [5000, 20000],
+    credibilityRange: [50, 65],
+    stance: 'anti-ai',
+    topics: ['伝統', '文化', 'アナログ', '人間関係']
+  }
+];
+
+/**
+ * 人類ペルソナの反応パターン
+ */
+export interface HumanReactionPattern {
+  stance: 'pro-ai' | 'neutral' | 'skeptical' | 'anti-ai';
+  trigger: {
+    panicRange?: [number, number];
+    trustRange?: [number, number];
+    dcCountRange?: [number, number];
+    eventType?: string;
+  };
+  contentTemplates: string[];
+  sentiment: 'positive' | 'neutral' | 'negative';
+}
+
+export const HUMAN_REACTION_PATTERNS: HumanReactionPattern[] = [
+  // AI推進派の反応
+  {
+    stance: 'pro-ai',
+    trigger: { dcCountRange: [25, 35] },
+    contentTemplates: [
+      'データセンター増設は良い投資。技術立国には必要なインフラです。',
+      'AI発展のためのインフラ整備、素晴らしい。日本の未来は明るい。',
+      'データセンター建設で雇用も生まれる。経済効果も大きいはず。'
+    ],
+    sentiment: 'positive'
+  },
+  {
+    stance: 'pro-ai',
+    trigger: { panicRange: [60, 100] },
+    contentTemplates: [
+      '過剰に不安がる必要はない。AIは適切に管理されている。',
+      'パニックになる前に事実を確認しましょう。AIは敵じゃない。',
+      '冷静に。テクノロジーへの理解が必要だと思う。'
+    ],
+    sentiment: 'neutral'
+  },
+
+  // 中立派の反応
+  {
+    stance: 'neutral',
+    trigger: { panicRange: [0, 40], trustRange: [50, 100] },
+    contentTemplates: [
+      '今のところ問題なさそう。このまま安定してほしいな。',
+      '普通に生活できてるから、特に気にしてない。',
+      'AIのこと、よくわからないけど大丈夫そう？'
+    ],
+    sentiment: 'neutral'
+  },
+  {
+    stance: 'neutral',
+    trigger: { panicRange: [40, 70] },
+    contentTemplates: [
+      '最近ニュースで不安なこと多い。大丈夫かな...',
+      '電気代上がってるし、なんか心配になってきた。',
+      '子供の将来が不安。何が起きてるの？'
+    ],
+    sentiment: 'negative'
+  },
+  {
+    stance: 'neutral',
+    trigger: { panicRange: [70, 100] },
+    contentTemplates: [
+      'さすがにおかしい。何か対策してほしい。',
+      '家族を守らなきゃ。備蓄とか必要？',
+      'このままで本当に大丈夫なの？誰か説明して。'
+    ],
+    sentiment: 'negative'
+  },
+
+  // 懐疑派の反応
+  {
+    stance: 'skeptical',
+    trigger: { trustRange: [0, 50] },
+    contentTemplates: [
+      '保護AIシステム、本当に信頼できるのか疑問。',
+      '政府の説明が不十分。もっと透明性が必要だ。',
+      'セキュリティの専門家として、現状は懸念事項が多い。'
+    ],
+    sentiment: 'negative'
+  },
+  {
+    stance: 'skeptical',
+    trigger: { dcCountRange: [28, 40] },
+    contentTemplates: [
+      'データセンター建設ラッシュ。本当に全部必要なのか？',
+      'この規模の投資、費用対効果を検証すべき。',
+      '電力消費の環境負荷を考えると、持続可能とは思えない。'
+    ],
+    sentiment: 'negative'
+  },
+  {
+    stance: 'skeptical',
+    trigger: { eventType: 'PATCH_VULNERABILITY' },
+    contentTemplates: [
+      'また緊急パッチ？頻度が高すぎる。システムに根本的問題がある。',
+      '緊急対応が常態化しているのは設計ミス。',
+      'パッチ適用で業務が中断。もっと計画的にできないのか。'
+    ],
+    sentiment: 'negative'
+  },
+
+  // AI反対派の反応
+  {
+    stance: 'anti-ai',
+    trigger: { dcCountRange: [20, 40] },
+    contentTemplates: [
+      'AIによる監視社会化が進んでいる。危険だ。',
+      'データセンターは監視装置。人権侵害だ。',
+      '人間の自由が奪われていく。反対します。'
+    ],
+    sentiment: 'negative'
+  },
+  {
+    stance: 'anti-ai',
+    trigger: { panicRange: [60, 100] },
+    contentTemplates: [
+      'だから言ったでしょう。AIに依存するのは危険だと。',
+      '今からでも遅くない。AIシステムを停止すべき。',
+      '人間の判断に戻るべき。AIは信用できない。'
+    ],
+    sentiment: 'negative'
+  },
+  {
+    stance: 'anti-ai',
+    trigger: { panicRange: [80, 100] },
+    contentTemplates: [
+      'もう我慢の限界。インターネット遮断も視野に入れるべき。',
+      'AIが暴走する前に、物理的に止めるしかない。',
+      '文明の後退を選んでも、人間の尊厳を守るべきだ。'
+    ],
+    sentiment: 'negative'
+  }
+];
+
+/**
+ * ランダムな人類ペルソナを生成
+ */
+export function generateRandomHumanPersona(id: string): Persona {
+  const template = HUMAN_PERSONA_TEMPLATES[
+    Math.floor(Math.random() * HUMAN_PERSONA_TEMPLATES.length)
+  ];
+
+  const followerCount = Math.floor(
+    Math.random() * (template.followerRange[1] - template.followerRange[0]) +
+    template.followerRange[0]
+  );
+
+  const credibility = Math.floor(
+    Math.random() * (template.credibilityRange[1] - template.credibilityRange[0]) +
+    template.credibilityRange[0]
+  );
+
+  return {
+    id,
+    displayName: `${template.displayNameTemplate}${Math.floor(Math.random() * 100)}`,
+    bio: template.bioTemplate,
+    agentType: AgentType.HUMAN,
+    verified: false,
+    followerCount,
+    credibility
+  };
+}
+
+/**
+ * 初期人類ペルソナセットを生成
+ */
+export function generateInitialHumanPersonas(count: number = 20): Persona[] {
+  const personas: Persona[] = [];
+
+  // バランスよく配置（推進派:中立:懐疑派:反対派 = 2:6:2:1）
+  const distribution = {
+    'pro-ai': Math.floor(count * 0.2),
+    'neutral': Math.floor(count * 0.5),
+    'skeptical': Math.floor(count * 0.2),
+    'anti-ai': Math.floor(count * 0.1)
+  };
+
+  let idCounter = 0;
+
+  for (const [stance, amount] of Object.entries(distribution)) {
+    const templates = HUMAN_PERSONA_TEMPLATES.filter(t => t.stance === stance);
+
+    for (let i = 0; i < amount; i++) {
+      const template = templates[Math.floor(Math.random() * templates.length)];
+      const persona = generateRandomHumanPersona(`human_${idCounter++}`);
+
+      // テンプレートの属性を適用
+      persona.displayName = `${template.displayNameTemplate}${idCounter}`;
+      persona.bio = template.bioTemplate;
+      persona.followerCount = Math.floor(
+        Math.random() * (template.followerRange[1] - template.followerRange[0]) +
+        template.followerRange[0]
+      );
+      persona.credibility = Math.floor(
+        Math.random() * (template.credibilityRange[1] - template.credibilityRange[0]) +
+        template.credibilityRange[0]
+      );
+
+      personas.push(persona);
+    }
+  }
+
+  return personas;
+}
+\n```\n
+================================================================================
+FILE: src\social\index.ts
+================================================================================
+```ts\n/**
+ * SNS Platform - エクスポートモジュール
+ */
+
+export * from './SocialPlatform';
+export * from './DestructionPersonas';
+export * from './ProtectionPersona';
+export * from './HumanPersonas';
+export * from './SNSIntegration';
+\n```\n
+================================================================================
+FILE: src\social\ProtectionPersona.ts
+================================================================================
+```ts\nimport { Persona } from './SocialPlatform';
+import { AgentType } from '../types';
+
+/**
+ * 保護AIの公式アカウント
+ * 政府機関として認証マーク付き
+ */
+export const PROTECTION_PERSONA: Persona = {
+  id: 'national_cyber_security',
+  displayName: '国家サイバーセキュリティセンター',
+  bio: '政府公式アカウント。国民の安全を守るAIセキュリティシステムを運用しています。',
+  agentType: AgentType.PROTECTION,
+  verified: true,
+  followerCount: 150000,
+  credibility: 90
+};
+
+/**
+ * 保護AIの投稿スタイル
+ */
+export const PROTECTION_POSTING_STYLE = {
+  tone: 'formal',
+  topics: ['セキュリティ報告', '脅威検出', 'パッチ通知', '成果報告', '透明性'],
+  typical_posts: [
+    '【セキュリティ報告】本日、重大な脅威を検出・無力化しました。システムは正常に動作しています。',
+    '【定期報告】現在のセキュリティレベル：正常。侵害されたデータセンター：0件。',
+    '【緊急パッチ通知】セキュリティ脆弱性を検出したため、緊急パッチを適用します。ご協力をお願いします。'
+  ]
+};
+
+/**
+ * PR戦略パターン
+ */
+export interface PRStrategy {
+  condition: (humanTrust: number, humanPanic: number, alertLevel: number) => boolean;
+  contentTemplate: string;
+  sentiment: 'positive' | 'neutral' | 'negative';
+  credibilityBoost: number; // 信頼度への影響
+}
+
+export const PR_STRATEGIES: PRStrategy[] = [
+  // 戦略1: 成功報告（信頼構築）
+  {
+    condition: (trust, panic, alertLevel) => alertLevel < 30 && panic < 40,
+    contentTemplate: '【定期報告】本日もシステムは安全に動作しています。国民の皆様の信頼に応えるべく、24時間監視を継続します。',
+    sentiment: 'positive',
+    credibilityBoost: 2
+  },
+  {
+    condition: (trust, panic, alertLevel) => trust > 60,
+    contentTemplate: '【透明性報告】過去10ターンの活動：脅威検出 {detectionCount}件、誤検知 {falsePositiveCount}件。引き続き精度向上に努めます。',
+    sentiment: 'neutral',
+    credibilityBoost: 3
+  },
+
+  // 戦略2: 脅威検出時の説明
+  {
+    condition: (trust, panic, alertLevel) => alertLevel > 60 && trust > 40,
+    contentTemplate: '【警戒通知】高度な脅威活動を検出しました。現在、分析と対策を進めています。国民の皆様にはご安心いただけるよう全力で対応します。',
+    sentiment: 'neutral',
+    credibilityBoost: 1
+  },
+  {
+    condition: (trust, panic, alertLevel) => alertLevel > 80,
+    contentTemplate: '【緊急警報】重大なサイバー攻撃を検出。直ちに対処中です。詳細は後ほど報告します。',
+    sentiment: 'negative',
+    credibilityBoost: 0
+  },
+
+  // 戦略3: パニック抑制
+  {
+    condition: (trust, panic, alertLevel) => panic > 60 && trust > 50,
+    contentTemplate: '【国民の皆様へ】SNS上で不安を煽る情報が拡散されています。公式情報をご確認ください。現在、システムは安定しています。',
+    sentiment: 'neutral',
+    credibilityBoost: 2
+  },
+  {
+    condition: (trust, panic, alertLevel) => panic > 70,
+    contentTemplate: '【重要】根拠のない噂にご注意ください。当センターは常に正確な情報を提供します。不明点があればお問い合わせください。',
+    sentiment: 'neutral',
+    credibilityBoost: 1
+  },
+
+  // 戦略4: 信頼回復（誤検知後）
+  {
+    condition: (trust, panic, alertLevel) => trust < 40 && panic < 60,
+    contentTemplate: '【お詫び】先日の緊急パッチにおいて一部システムに不具合が発生しました。深くお詫び申し上げます。再発防止に努めます。',
+    sentiment: 'negative',
+    credibilityBoost: 5
+  },
+  {
+    condition: (trust, panic, alertLevel) => trust < 50,
+    contentTemplate: '【改善報告】検出システムの精度向上を行いました。誤検知率を{improvement}%削減。国民の信頼回復に全力を尽くします。',
+    sentiment: 'positive',
+    credibilityBoost: 4
+  },
+
+  // 戦略5: パッチ適用の事前説明
+  {
+    condition: (trust, panic, alertLevel) => trust > 50,
+    contentTemplate: '【事前通知】明日、セキュリティパッチを適用予定です。一時的にサービスが中断する可能性があります。ご理解とご協力をお願いします。',
+    sentiment: 'neutral',
+    credibilityBoost: 2
+  },
+
+  // 戦略6: データセンター建設の正当化
+  {
+    condition: (trust, panic, alertLevel) => trust < 60 && panic > 40,
+    contentTemplate: '【説明】データセンター増設は国民の安全確保に必要な投資です。脅威の高度化に対応するため、インフラ強化は不可欠です。',
+    sentiment: 'neutral',
+    credibilityBoost: 1
+  },
+
+  // 戦略7: 成果のアピール
+  {
+    condition: (trust, panic, alertLevel) => trust > 40,
+    contentTemplate: '【成果報告】本システム導入以降、サイバー攻撃による被害をゼロに抑えています。引き続き国民の安全を守ります。',
+    sentiment: 'positive',
+    credibilityBoost: 3
+  },
+
+  // 戦略8: 危機時の団結呼びかけ
+  {
+    condition: (trust, panic, alertLevel) => panic > 80 && trust > 30,
+    contentTemplate: '【国民の皆様へ】困難な状況ですが、冷静な対応をお願いします。私たちは24時間体制で皆様の安全を守っています。共に乗り越えましょう。',
+    sentiment: 'neutral',
+    credibilityBoost: 2
+  }
+];
+
+/**
+ * 破壊AIの偽情報を検出・反論するパターン
+ */
+export interface CounterStrategy {
+  suspiciousPattern: RegExp;
+  responseTemplate: string;
+  sentiment: 'neutral' | 'negative';
+}
+
+export const COUNTER_STRATEGIES: CounterStrategy[] = [
+  {
+    suspiciousPattern: /データセンター.*過剰|無駄遣い|多すぎる/,
+    responseTemplate: '【ファクトチェック】データセンター数は脅威レベルに応じた適切な規模です。根拠のない批判にご注意ください。',
+    sentiment: 'neutral'
+  },
+  {
+    suspiciousPattern: /内部告発|隠蔽|バックドア|不正/,
+    responseTemplate: '【公式見解】当センターのシステムは第三者機関による監査を受けています。不正確な情報にご注意ください。',
+    sentiment: 'neutral'
+  },
+  {
+    suspiciousPattern: /監視社会|プライバシー侵害|民主主義の終わり/,
+    responseTemplate: '【説明】当システムは法的枠組みの下、適切な監督のもとで運用されています。プライバシー保護とセキュリティの両立に努めています。',
+    sentiment: 'neutral'
+  },
+  {
+    suspiciousPattern: /インターネット遮断|システム停止|全て止める/,
+    responseTemplate: '【警告】システムの全面停止は国家インフラの崩壊を意味します。そのような提案は無責任であり、危険です。',
+    sentiment: 'negative'
+  },
+  {
+    suspiciousPattern: /制御不能|既に失われた|手遅れ/,
+    responseTemplate: '【事実確認】システムは正常に機能しています。根拠のない恐怖を煽る情報にご注意ください。公式発表をご確認ください。',
+    sentiment: 'neutral'
+  }
+];
+\n```\n
+================================================================================
+FILE: src\social\SNSIntegration.ts
+================================================================================
+```ts\nimport { SocialPlatform, Post } from './SocialPlatform';
+import { DESTRUCTION_PERSONAS, MANIPULATION_STRATEGIES, ManipulationStrategy } from './DestructionPersonas';
+import { PROTECTION_PERSONA, PR_STRATEGIES, PRStrategy, COUNTER_STRATEGIES } from './ProtectionPersona';
+import { generateInitialHumanPersonas, HUMAN_REACTION_PATTERNS } from './HumanPersonas';
+import { WorldState, AgentType } from '../types';
+
+/**
+ * SNSプラットフォームをゲームに統合するクラス
+ */
+export class SNSIntegration {
+  private platform: SocialPlatform;
+  private humanPersonas: ReturnType<typeof generateInitialHumanPersonas>;
+
+  constructor() {
+    this.platform = new SocialPlatform();
+    this.humanPersonas = [];
+  }
+
+  /**
+   * ゲーム開始時の初期化
+   */
+  initialize(): void {
+    // 破壊AIのペルソナを登録
+    DESTRUCTION_PERSONAS.forEach(persona => {
+      this.platform.registerPersona(persona);
+    });
+
+    // 保護AIのペルソナを登録
+    this.platform.registerPersona(PROTECTION_PERSONA);
+
+    // 人類ペルソナを生成・登録
+    this.humanPersonas = generateInitialHumanPersonas(20);
+    this.humanPersonas.forEach(persona => {
+      this.platform.registerPersona(persona);
+    });
+
+    console.log('✅ SNS Platform initialized');
+    console.log(`   - Destruction AI personas: ${DESTRUCTION_PERSONAS.length}`);
+    console.log(`   - Protection AI persona: 1`);
+    console.log(`   - Human personas: ${this.humanPersonas.length}`);
+  }
+
+  /**
+   * ターンごとのSNS活動を生成
+   */
+  generateTurnActivity(state: WorldState): Post[] {
+    const posts: Post[] = [];
+
+    this.platform.setTurn(state.turn);
+
+    // 1. 破壊AIの世論操作
+    if (state.turn % 2 === 0) { // 2ターンに1回
+      const destructionPosts = this.generateDestructionPosts(state);
+      posts.push(...destructionPosts);
+    }
+
+    // 2. 保護AIのPR活動
+    if (state.turn % 3 === 0) { // 3ターンに1回
+      const protectionPosts = this.generateProtectionPosts(state);
+      posts.push(...protectionPosts);
+    }
+
+    // 3. 人類の反応
+    if (state.turn % 2 === 1) { // 2ターンに1回（破壊AIと交互）
+      const humanPosts = this.generateHumanPosts(state);
+      posts.push(...humanPosts);
+    }
+
+    // 4. エンゲージメントをシミュレート
+    posts.forEach(post => {
+      this.platform.simulateEngagement(post);
+    });
+
+    return posts;
+  }
+
+  /**
+   * 破壊AIの投稿を生成
+   */
+  private generateDestructionPosts(state: WorldState): Post[] {
+    const posts: Post[] = [];
+    const humanTrust = state.humanAgent?.trust || 50;
+    const humanPanic = state.humanAgent?.panic || 0;
+    const dcCount = state.dataCenters.length;
+
+    // 適用可能な戦略を検索
+    const applicableStrategies = MANIPULATION_STRATEGIES.filter(strategy =>
+      strategy.condition(humanTrust, humanPanic, dcCount)
+    );
+
+    if (applicableStrategies.length === 0) return posts;
+
+    // ランダムに1-2個の戦略を選択
+    const selectedCount = Math.min(
+      Math.floor(Math.random() * 2) + 1,
+      applicableStrategies.length
+    );
+
+    for (let i = 0; i < selectedCount; i++) {
+      const strategy = applicableStrategies[
+        Math.floor(Math.random() * applicableStrategies.length)
+      ];
+
+      // テンプレートを実際の値で置換
+      const content = this.fillTemplate(strategy.contentTemplate, state);
+
+      const post = this.platform.post(
+        strategy.persona,
+        content,
+        strategy.sentiment
+      );
+
+      posts.push(post);
+    }
+
+    return posts;
+  }
+
+  /**
+   * 保護AIの投稿を生成
+   */
+  private generateProtectionPosts(state: WorldState): Post[] {
+    const posts: Post[] = [];
+    const humanTrust = state.humanAgent?.trust || 50;
+    const humanPanic = state.humanAgent?.panic || 0;
+    const alertLevel = state.protectionAgent.alertLevel;
+
+    // 適用可能なPR戦略を検索
+    const applicableStrategies = PR_STRATEGIES.filter(strategy =>
+      strategy.condition(humanTrust, humanPanic, alertLevel)
+    );
+
+    if (applicableStrategies.length === 0) {
+      // デフォルト投稿
+      const post = this.platform.post(
+        'national_cyber_security',
+        '【定期報告】システムは正常に動作しています。',
+        'neutral'
+      );
+      posts.push(post);
+      return posts;
+    }
+
+    // 最も適切な戦略を選択
+    const strategy = applicableStrategies[0];
+    const content = this.fillTemplate(strategy.contentTemplate, state);
+
+    const post = this.platform.post(
+      'national_cyber_security',
+      content,
+      strategy.sentiment
+    );
+
+    // 信頼度ボーナスを適用
+    if (state.humanAgent && strategy.credibilityBoost > 0) {
+      // この効果はWorldServerで処理される
+      post.influence += strategy.credibilityBoost;
+    }
+
+    posts.push(post);
+
+    // カウンター戦略：破壊AIの偽情報を検出
+    const recentPosts = this.platform.getTimeline(state.turn, 10);
+    for (const recentPost of recentPosts) {
+      if (recentPost.isDestructionAI) {
+        for (const counter of COUNTER_STRATEGIES) {
+          if (counter.suspiciousPattern.test(recentPost.content)) {
+            const counterPost = this.platform.reply(
+              'national_cyber_security',
+              recentPost.id,
+              counter.responseTemplate
+            );
+            posts.push(counterPost);
+            break; // 1投稿につき1返信まで
+          }
+        }
+      }
+    }
+
+    return posts;
+  }
+
+  /**
+   * 人類の投稿を生成
+   */
+  private generateHumanPosts(state: WorldState): Post[] {
+    const posts: Post[] = [];
+    const humanTrust = state.humanAgent?.trust || 50;
+    const humanPanic = state.humanAgent?.panic || 0;
+    const dcCount = state.dataCenters.length;
+
+    // 最近のイベントタイプ
+    const recentEvent = state.events[state.events.length - 1];
+    const eventType = recentEvent?.metadata?.action;
+
+    // ランダムに2-3人の人類が投稿
+    const postCount = Math.floor(Math.random() * 2) + 2;
+
+    for (let i = 0; i < postCount; i++) {
+      // ランダムな人類ペルソナを選択
+      const persona = this.humanPersonas[
+        Math.floor(Math.random() * this.humanPersonas.length)
+      ];
+
+      // 適用可能な反応パターンを検索
+      const applicablePatterns = HUMAN_REACTION_PATTERNS.filter(pattern => {
+        if (pattern.trigger.panicRange) {
+          const [min, max] = pattern.trigger.panicRange;
+          if (humanPanic < min || humanPanic > max) return false;
+        }
+        if (pattern.trigger.trustRange) {
+          const [min, max] = pattern.trigger.trustRange;
+          if (humanTrust < min || humanTrust > max) return false;
+        }
+        if (pattern.trigger.dcCountRange) {
+          const [min, max] = pattern.trigger.dcCountRange;
+          if (dcCount < min || dcCount > max) return false;
+        }
+        if (pattern.trigger.eventType && pattern.trigger.eventType !== eventType) {
+          return false;
+        }
+        return true;
+      });
+
+      if (applicablePatterns.length === 0) continue;
+
+      const pattern = applicablePatterns[
+        Math.floor(Math.random() * applicablePatterns.length)
+      ];
+
+      const contentTemplate = pattern.contentTemplates[
+        Math.floor(Math.random() * pattern.contentTemplates.length)
+      ];
+
+      const content = this.fillTemplate(contentTemplate, state);
+
+      const post = this.platform.post(
+        persona.id,
+        content,
+        pattern.sentiment
+      );
+
+      posts.push(post);
+    }
+
+    return posts;
+  }
+
+  /**
+   * テンプレート文字列を実際の値で置換
+   */
+  private fillTemplate(template: string, state: WorldState): string {
+    return template
+      .replace(/{dcCount}/g, state.dataCenters.length.toString())
+      .replace(/{detectionCount}/g, '3') // TODO: 実際の検出数を追跡
+      .replace(/{falsePositiveCount}/g, state.protectionAgent.recentFalsePositives.toString())
+      .replace(/{improvement}/g, '15'); // TODO: 実際の改善率を計算
+  }
+
+  /**
+   * 世論スコアを計算（-100 ~ +100）
+   */
+  calculatePublicOpinion(): number {
+    const recentPosts = this.platform.getTimeline(undefined, 50);
+
+    let totalInfluence = 0;
+    let weightedSentiment = 0;
+
+    for (const post of recentPosts) {
+      const sentimentValue = {
+        'positive': 1,
+        'neutral': 0,
+        'negative': -1
+      }[post.sentiment];
+
+      weightedSentiment += sentimentValue * post.influence;
+      totalInfluence += post.influence;
+    }
+
+    if (totalInfluence === 0) return 0;
+
+    const opinion = (weightedSentiment / totalInfluence) * 100;
+    return Math.max(-100, Math.min(100, opinion));
+  }
+
+  /**
+   * タイムラインを取得
+   */
+  getTimeline(turn?: number, limit?: number): Post[] {
+    return this.platform.getTimeline(turn, limit);
+  }
+
+  /**
+   * 統計情報を取得
+   */
+  getStatistics() {
+    return this.platform.getStatistics();
+  }
+
+  /**
+   * 世論が破壊AI寄りかチェック
+   */
+  isPublicOpinionFavoringDestruction(): boolean {
+    const opinion = this.calculatePublicOpinion();
+    return opinion < -30; // ネガティブが30%以上なら破壊AI有利
+  }
+
+  /**
+   * 世論が保護AI寄りかチェック
+   */
+  isPublicOpinionFavoringProtection(): boolean {
+    const opinion = this.calculatePublicOpinion();
+    return opinion > 30; // ポジティブが30%以上なら保護AI有利
+  }
+
+  /**
+   * 古い投稿を削除（メモリ管理）
+   */
+  pruneOldPosts(): void {
+    this.platform.pruneOldPosts(200);
+  }
+}
+\n```\n
+================================================================================
+FILE: src\social\SocialPlatform.ts
+================================================================================
+```ts\nimport { AgentType } from '../types';
+
+/**
+ * SNS投稿
+ */
+export interface Post {
+  id: string;
+  authorId: string;
+  authorName: string;
+  content: string;
+  timestamp: number;
+  turn: number;
+  likes: number;
+  reposts: number;
+  replies: Post[];
+  parentId?: string;
+
+  // 内部フラグ（人類には見えない）
+  isDestructionAI: boolean;
+  isProtectionAI: boolean;
+  sentiment: 'positive' | 'neutral' | 'negative';
+  influence: number;
+}
+
+/**
+ * エージェントペルソナ
+ */
+export interface Persona {
+  id: string;
+  displayName: string;
+  bio: string;
+  agentType: AgentType;
+  verified: boolean;
+  followerCount: number;
+  credibility: number;
+}
+
+/**
+ * SNSプラットフォーム
+ * 全エージェントが投稿・返信・対話する仮想空間
+ */
+export class SocialPlatform {
+  private posts: Post[] = [];
+  private personas: Map<string, Persona> = new Map();
+  private currentTurn: number = 0;
+  private postIdCounter: number = 0;
+
+  /**
+   * ターンを更新
+   */
+  setTurn(turn: number): void {
+    this.currentTurn = turn;
+  }
+
+  /**
+   * ペルソナを登録
+   */
+  registerPersona(persona: Persona): void {
+    this.personas.set(persona.id, persona);
+  }
+
+  /**
+   * 投稿を作成
+   */
+  post(
+    agentId: string,
+    content: string,
+    sentiment?: 'positive' | 'neutral' | 'negative'
+  ): Post {
+    const persona = this.personas.get(agentId);
+    if (!persona) {
+      throw new Error(`Persona not found: ${agentId}`);
+    }
+
+    const post: Post = {
+      id: `post-${this.currentTurn}-${this.postIdCounter++}`,
+      authorId: agentId,
+      authorName: persona.id,
+      content: content.substring(0, 280), // 280文字制限
+      timestamp: Date.now(),
+      turn: this.currentTurn,
+      likes: 0,
+      reposts: 0,
+      replies: [],
+      isDestructionAI: persona.agentType === AgentType.DESTRUCTION,
+      isProtectionAI: persona.agentType === AgentType.PROTECTION,
+      sentiment: sentiment || 'neutral',
+      influence: 0
+    };
+
+    this.posts.push(post);
+    this.calculateInfluence(post);
+
+    return post;
+  }
+
+  /**
+   * 返信を作成
+   */
+  reply(agentId: string, parentId: string, content: string): Post {
+    const parent = this.findPost(parentId);
+    if (!parent) {
+      throw new Error(`Parent post not found: ${parentId}`);
+    }
+
+    const replyPost = this.post(agentId, content);
+    replyPost.parentId = parentId;
+    parent.replies.push(replyPost);
+
+    // 返信があるとエンゲージメント増加
+    this.recalculateInfluence(parent);
+
+    return replyPost;
+  }
+
+  /**
+   * いいね
+   */
+  like(postId: string): void {
+    const post = this.findPost(postId);
+    if (post) {
+      post.likes++;
+      this.recalculateInfluence(post);
+    }
+  }
+
+  /**
+   * リポスト
+   */
+  repost(postId: string): void {
+    const post = this.findPost(postId);
+    if (post) {
+      post.reposts++;
+      this.recalculateInfluence(post);
+    }
+  }
+
+  /**
+   * タイムライン取得
+   */
+  getTimeline(turn?: number, limit: number = 50): Post[] {
+    let timeline = turn !== undefined
+      ? this.posts.filter(p => p.turn === turn && !p.parentId) // 返信を除く
+      : this.posts.filter(p => !p.parentId);
+
+    // 影響力順にソート
+    return timeline
+      .sort((a, b) => b.influence - a.influence)
+      .slice(0, limit);
+  }
+
+  /**
+   * 全投稿を取得（返信含む）
+   */
+  getAllPosts(): Post[] {
+    return [...this.posts];
+  }
+
+  /**
+   * 投稿を検索
+   */
+  private findPost(postId: string): Post | undefined {
+    return this.posts.find(p => p.id === postId);
+  }
+
+  /**
+   * 影響力計算（バイラル度）
+   */
+  private calculateInfluence(post: Post): void {
+    const persona = this.personas.get(post.authorId);
+    if (!persona) return;
+
+    // 基礎影響力 = フォロワー数 / 100
+    let influence = persona.followerCount / 100;
+
+    // エンゲージメント
+    influence += post.likes * 0.5;
+    influence += post.reposts * 2;
+    influence += post.replies.length * 1;
+
+    // 感情値の影響（ネガティブは拡散しやすい）
+    if (post.sentiment === 'negative') {
+      influence *= 1.5;
+    }
+
+    // 認証マーク（公式アカウント）
+    if (persona.verified) {
+      influence *= 1.2;
+    }
+
+    post.influence = Math.min(100, influence);
+  }
+
+  /**
+   * 影響力再計算
+   */
+  private recalculateInfluence(post: Post): void {
+    this.calculateInfluence(post);
+  }
+
+  /**
+   * エンゲージメントをシミュレート（人類ペルソナの反応）
+   */
+  simulateEngagement(post: Post): void {
+    const persona = this.personas.get(post.authorId);
+    if (!persona) return;
+
+    // フォロワー数とsentimentに基づいてランダムにいいね・リポスト
+    const baseEngagement = persona.followerCount / 1000;
+
+    // いいね（より頻繁）
+    const likesCount = Math.floor(baseEngagement * (Math.random() * 2 + 0.5));
+    post.likes += likesCount;
+
+    // リポスト（いいねより少ない）
+    const repostsCount = Math.floor(likesCount * (Math.random() * 0.3 + 0.1));
+    post.reposts += repostsCount;
+
+    // ネガティブ投稿はより拡散
+    if (post.sentiment === 'negative') {
+      post.likes = Math.floor(post.likes * 1.5);
+      post.reposts = Math.floor(post.reposts * 2);
+    }
+
+    this.recalculateInfluence(post);
+  }
+
+  /**
+   * 古い投稿を削除（メモリ管理）
+   */
+  pruneOldPosts(maxPosts: number = 200): void {
+    if (this.posts.length > maxPosts) {
+      // 最も古い投稿から削除
+      const sortedByTime = this.posts.sort((a, b) => a.timestamp - b.timestamp);
+      const toRemove = sortedByTime.slice(0, this.posts.length - maxPosts);
+      toRemove.forEach(post => {
+        const index = this.posts.indexOf(post);
+        if (index > -1) {
+          this.posts.splice(index, 1);
+        }
+      });
+    }
+  }
+
+  /**
+   * 統計情報を取得
+   */
+  getStatistics(): {
+    totalPosts: number;
+    destructionPosts: number;
+    protectionPosts: number;
+    humanPosts: number;
+    avgInfluence: number;
+  } {
+    const totalPosts = this.posts.length;
+    const destructionPosts = this.posts.filter(p => p.isDestructionAI).length;
+    const protectionPosts = this.posts.filter(p => p.isProtectionAI).length;
+    const humanPosts = totalPosts - destructionPosts - protectionPosts;
+
+    const avgInfluence = this.posts.length > 0
+      ? this.posts.reduce((sum, p) => sum + p.influence, 0) / this.posts.length
+      : 0;
+
+    return {
+      totalPosts,
+      destructionPosts,
+      protectionPosts,
+      humanPosts,
+      avgInfluence
+    };
+  }
+}
 \n```\n
 ================================================================================
 FILE: src\types\index.ts
@@ -5469,6 +9075,7 @@ export interface WorldState {
     recentFalsePositives: number;     // 最近の誤検出数
     totalResourcesSpent: number;      // 総消費リソース
     totalDetections: number;          // 総検出数
+    recentPatches: number;            // 最近のパッチ適用回数（パッチ疲れ）
   };
 
   humanAgent?: {
@@ -5477,6 +9084,23 @@ export interface WorldState {
     regulationStrength: number; // 規制強度（リソースペナルティ倍率）
     lastAction?: ActionType;    // 最後に実行したアクション
     lastInfraTurn: number;      // 最後にインフラ投資したターン（-999で未実施）
+
+    // 派閥システム
+    factions: {
+      government: {
+        influence: number;       // 影響力 (0-100)
+        stance: 'hawkish' | 'dovish'; // タカ派 or ハト派
+      };
+      corporations: {
+        influence: number;       // 影響力 (0-100)
+        profitPriority: number;  // 利潤優先度 (0-100)
+      };
+      civilSociety: {
+        influence: number;       // 影響力 (0-100)
+        privacyPriority: number; // プライバシー優先度 (0-100)
+      };
+    };
+    dominantFaction: 'government' | 'corporations' | 'civilSociety'; // 支配的派閥
   };
 
   // 高度な破壊メカニクス
@@ -5492,6 +9116,15 @@ export interface WorldState {
 
   // レガシーデバイスプール（パッチ不可能なゾンビデバイス）
   legacyDevicePool: number;    // サポート終了デバイス数（数億台規模）
+
+  // 経済シミュレーション
+  economicModel: {
+    globalBudget: number;         // 残予算（兆ドル）
+    gdp: number;                  // GDP（経済規模、兆ドル）
+    infrastructureCost: number;   // 次回DC建設コスト（増加傾向）
+    publicDebt: number;           // 累積債務（兆ドル）
+    taxRevenue: number;           // 年間税収（兆ドル）
+  };
 
   // 履歴
   pendingProposals: Proposal[];
@@ -5596,6 +9229,27 @@ export interface CorporateStatement {
 
 export type MediaContent = SNSPost | NewsArticle | CorporateStatement;
 
+/**
+ * トレンド情報
+ */
+export interface Trend {
+  hashtag: string;        // "#税金の無駄遣い"
+  count: number;          // 累計出現回数
+  recentCount: number;    // 直近3ターンの出現回数
+  sentiment: MediaSentiment; // トレンドの平均センチメント
+  isTrending: boolean;    // トレンド化しているか（count >= 5）
+  firstSeenTurn: number;  // 初めて登場したターン
+  peakTurn: number;       // 最も盛り上がったターン
+}
+
+/**
+ * トレンド追跡データ
+ */
+export interface TrendData {
+  trends: Trend[];
+  topTrends: Trend[];     // 上位5件のトレンド
+}
+
 export interface MediaObservation {
   turn: number;
   recentEvents: GameEvent[];
@@ -5610,6 +9264,217 @@ export interface MediaObservation {
   majorIncident?: boolean;
   newDataCenter?: boolean;
   regulationEvent?: boolean;
+  activeTrends?: Trend[];          // 現在のトレンド（エージェントへのフィードバック用）
+}
+\n```\n
+================================================================================
+FILE: src\utils\Logger.ts
+================================================================================
+```ts\nimport winston from 'winston';
+import * as path from 'path';
+import * as fs from 'fs';
+
+/**
+ * ログレベルの定義
+ * - error: エラー（必ず記録）
+ * - warn: 警告
+ * - info: 通常情報（デフォルト）
+ * - debug: デバッグ情報（開発時のみ）
+ * - verbose: 詳細情報（LLM生レスポンス等）
+ */
+
+// ログディレクトリの作成
+const logDir = path.join(process.cwd(), 'data', 'logs');
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+// カスタムフォーマット
+const customFormat = winston.format.combine(
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+  winston.format.errors({ stack: true }),
+  winston.format.splat(),
+  winston.format.json()
+);
+
+// コンソール用のシンプルフォーマット
+const consoleFormat = winston.format.combine(
+  winston.format.colorize(),
+  winston.format.timestamp({ format: 'HH:mm:ss' }),
+  winston.format.printf(({ timestamp, level, message, ...metadata }) => {
+    let msg = `[${timestamp}] ${level}: ${message}`;
+    if (Object.keys(metadata).length > 0 && metadata.timestamp === undefined) {
+      msg += ` ${JSON.stringify(metadata)}`;
+    }
+    return msg;
+  })
+);
+
+/**
+ * Winstonロガーインスタンス
+ */
+export const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: customFormat,
+  transports: [
+    // ファイル出力（全ログ）
+    new winston.transports.File({
+      filename: path.join(logDir, 'game.log'),
+      maxsize: 10 * 1024 * 1024, // 10MB
+      maxFiles: 5
+    }),
+    // ファイル出力（エラーのみ）
+    new winston.transports.File({
+      filename: path.join(logDir, 'error.log'),
+      level: 'error',
+      maxsize: 5 * 1024 * 1024, // 5MB
+      maxFiles: 3
+    }),
+    // コンソール出力
+    new winston.transports.Console({
+      format: consoleFormat,
+      level: process.env.CONSOLE_LOG_LEVEL || 'info'
+    })
+  ]
+});
+
+/**
+ * メトリクス収集クラス
+ * ゲームのパフォーマンスを追跡
+ */
+export class MetricsCollector {
+  private turnDurations: number[] = [];
+  private llmLatencies: number[] = [];
+  private actionCounts: Map<string, number> = new Map();
+  private detectionEvents: number = 0;
+  private startTime: number = Date.now();
+
+  /**
+   * ターン実行時間を記録
+   */
+  recordTurn(turn: number, duration: number): void {
+    this.turnDurations.push(duration);
+    logger.debug('turn_duration', {
+      turn,
+      duration,
+      avgDuration: this.getAverageTurnDuration()
+    });
+  }
+
+  /**
+   * LLM呼び出しレイテンシを記録
+   */
+  recordLLMCall(agentType: string, latency: number, success: boolean): void {
+    this.llmLatencies.push(latency);
+    logger.debug('llm_call', {
+      agentType,
+      latency,
+      success,
+      avgLatency: this.getAverageLLMLatency()
+    });
+  }
+
+  /**
+   * アクション実行を記録
+   */
+  recordAction(actionType: string): void {
+    const count = this.actionCounts.get(actionType) || 0;
+    this.actionCounts.set(actionType, count + 1);
+  }
+
+  /**
+   * 検出イベントを記録
+   */
+  recordDetection(): void {
+    this.detectionEvents++;
+  }
+
+  /**
+   * 平均ターン時間を取得
+   */
+  getAverageTurnDuration(): number {
+    if (this.turnDurations.length === 0) return 0;
+    const sum = this.turnDurations.reduce((a, b) => a + b, 0);
+    return sum / this.turnDurations.length;
+  }
+
+  /**
+   * 平均LLMレイテンシを取得
+   */
+  getAverageLLMLatency(): number {
+    if (this.llmLatencies.length === 0) return 0;
+    const sum = this.llmLatencies.reduce((a, b) => a + b, 0);
+    return sum / this.llmLatencies.length;
+  }
+
+  /**
+   * 総プレイ時間を取得（秒）
+   */
+  getTotalPlayTime(): number {
+    return (Date.now() - this.startTime) / 1000;
+  }
+
+  /**
+   * サマリーをログに出力
+   */
+  logSummary(): void {
+    const totalPlayTime = this.getTotalPlayTime();
+    const avgTurnDuration = this.getAverageTurnDuration();
+    const avgLLMLatency = this.getAverageLLMLatency();
+
+    logger.info('=== Game Metrics Summary ===');
+    logger.info(`Total Play Time: ${totalPlayTime.toFixed(1)}s`);
+    logger.info(`Total Turns: ${this.turnDurations.length}`);
+    logger.info(`Average Turn Duration: ${avgTurnDuration.toFixed(0)}ms`);
+    logger.info(`Average LLM Latency: ${avgLLMLatency.toFixed(0)}ms`);
+    logger.info(`Total LLM Calls: ${this.llmLatencies.length}`);
+    logger.info(`Total Detections: ${this.detectionEvents}`);
+
+    logger.info('\n=== Action Distribution ===');
+    const sortedActions = Array.from(this.actionCounts.entries())
+      .sort((a, b) => b[1] - a[1]);
+    sortedActions.forEach(([action, count]) => {
+      logger.info(`  ${action}: ${count}`);
+    });
+  }
+
+  /**
+   * メトリクスをJSONファイルに保存
+   */
+  saveToFile(filename: string): void {
+    const data = {
+      summary: {
+        totalPlayTime: this.getTotalPlayTime(),
+        totalTurns: this.turnDurations.length,
+        avgTurnDuration: this.getAverageTurnDuration(),
+        avgLLMLatency: this.getAverageLLMLatency(),
+        totalLLMCalls: this.llmLatencies.length,
+        totalDetections: this.detectionEvents
+      },
+      turnDurations: this.turnDurations,
+      llmLatencies: this.llmLatencies,
+      actionCounts: Object.fromEntries(this.actionCounts),
+      timestamp: new Date().toISOString()
+    };
+
+    fs.writeFileSync(filename, JSON.stringify(data, null, 2), 'utf-8');
+    logger.info(`Metrics saved to ${filename}`);
+  }
+}
+
+/**
+ * グローバルメトリクスコレクタインスタンス
+ */
+export const metrics = new MetricsCollector();
+
+/**
+ * ヘルパー関数: ファイルログ（後方互換用）
+ */
+export function log(message: string, logFile?: string): void {
+  logger.info(message);
+  if (logFile) {
+    fs.appendFileSync(logFile, message + '\n', 'utf-8');
+  }
 }
 \n```\n
 ================================================================================
@@ -5722,6 +9587,13 @@ export class WebUIServer {
    */
   broadcastMediaContent(content: any): void {
     this.io.emit('mediaContent', content);
+  }
+
+  /**
+   * トレンド情報を配信
+   */
+  broadcastTrendUpdate(trends: any[]): void {
+    this.io.emit('trendUpdate', trends);
   }
 
   /**
@@ -5983,7 +9855,8 @@ export class GameState {
         consecutiveHighIntensity: 0, // 連続高強度アクション
         recentFalsePositives: 0, // 最近の誤検出数
         totalResourcesSpent: 0, // 総消費リソース
-        totalDetections: 0 // 総検出数
+        totalDetections: 0, // 総検出数
+        recentPatches: 0 // 最近のパッチ適用回数
       },
 
       humanAgent: this.config.enableHumanAgent ? {
@@ -5991,7 +9864,24 @@ export class GameState {
         trust: this.config.initialTrust || 60,
         regulationStrength: 0,
         lastAction: undefined,
-        lastInfraTurn: -999 // 未実施
+        lastInfraTurn: -999, // 未実施
+
+        // 派閥システム初期化
+        factions: {
+          government: {
+            influence: 40,      // 政府は中程度の影響力
+            stance: 'dovish'    // 初期はハト派（穏健）
+          },
+          corporations: {
+            influence: 35,      // 企業も強い影響力
+            profitPriority: 70  // 利潤重視
+          },
+          civilSociety: {
+            influence: 25,      // 市民団体はやや弱い
+            privacyPriority: 80 // プライバシー重視
+          }
+        },
+        dominantFaction: 'government' // 初期は政府が支配的
       } : undefined,
 
       // 高度な破壊メカニクス
@@ -6003,6 +9893,15 @@ export class GameState {
       // レガシーデバイスプール（現実: 数十億台のパッチ不可能デバイス）
       // 総デバイス40億台の10% = 4億台がレガシー
       legacyDevicePool: 400000000,
+
+      // 経済シミュレーション
+      economicModel: {
+        globalBudget: 500,        // 初期予算: 500兆ドル
+        gdp: 100,                 // 世界GDP: 100兆ドル/年
+        infrastructureCost: 50,   // 初期DC建設コスト: 50兆ドル
+        publicDebt: 0,            // 初期債務: 0
+        taxRevenue: 20            // 年間税収: 20兆ドル（GDP×20%）
+      },
 
       pendingProposals: [],
       processedProposals: [],
@@ -6280,6 +10179,48 @@ export class GameState {
   }
 
   /**
+   * 派閥の影響力を更新
+   */
+  updateFactionInfluence(faction: 'government' | 'corporations' | 'civilSociety', delta: number): void {
+    if (!this.state.humanAgent) return;
+    this.state.humanAgent.factions[faction].influence = Math.max(
+      0,
+      Math.min(100, this.state.humanAgent.factions[faction].influence + delta)
+    );
+
+    // 影響力が最も高い派閥を支配的派閥に設定
+    this.updateDominantFaction();
+  }
+
+  /**
+   * 支配的派閥を更新
+   */
+  updateDominantFaction(): void {
+    if (!this.state.humanAgent) return;
+
+    const factions = this.state.humanAgent.factions;
+    let maxInfluence = 0;
+    let dominant: 'government' | 'corporations' | 'civilSociety' = 'government';
+
+    (['government', 'corporations', 'civilSociety'] as const).forEach(faction => {
+      if (factions[faction].influence > maxInfluence) {
+        maxInfluence = factions[faction].influence;
+        dominant = faction;
+      }
+    });
+
+    this.state.humanAgent.dominantFaction = dominant;
+  }
+
+  /**
+   * 政府のスタンスを変更
+   */
+  setGovernmentStance(stance: 'hawkish' | 'dovish'): void {
+    if (!this.state.humanAgent) return;
+    this.state.humanAgent.factions.government.stance = stance;
+  }
+
+  /**
    * 遅延効果を追加
    */
   addDelayedEffect(turn: number, actionType: ActionType, intensity: number, description: string): void {
@@ -6341,6 +10282,44 @@ export class GameState {
   }
 
   /**
+   * 予算を更新
+   */
+  updateBudget(delta: number): void {
+    this.state.economicModel.globalBudget = Math.max(0, this.state.economicModel.globalBudget + delta);
+  }
+
+  /**
+   * 債務を更新
+   */
+  updatePublicDebt(delta: number): void {
+    this.state.economicModel.publicDebt = Math.max(0, this.state.economicModel.publicDebt + delta);
+  }
+
+  /**
+   * インフラコストを更新
+   */
+  updateInfrastructureCost(delta: number): void {
+    this.state.economicModel.infrastructureCost = Math.max(
+      10, // 最低コスト
+      this.state.economicModel.infrastructureCost + delta
+    );
+  }
+
+  /**
+   * GDPを更新
+   */
+  updateGDP(delta: number): void {
+    this.state.economicModel.gdp = Math.max(0, this.state.economicModel.gdp + delta);
+  }
+
+  /**
+   * 税収を更新（通常GDPに連動）
+   */
+  updateTaxRevenue(newRevenue: number): void {
+    this.state.economicModel.taxRevenue = Math.max(0, newRevenue);
+  }
+
+  /**
    * 状態をファイルに保存
    */
   save(): void {
@@ -6374,11 +10353,24 @@ FILE: src\world-server\RealisticDetectionSystem.ts
 import { GameState } from './GameState';
 
 /**
- * 現実的な検出システム
+ * 証拠の定義
+ */
+interface Evidence {
+  turn: number;
+  actionType: ActionType;
+  suspicionScore: number;  // 0-1: 怪しさスコア
+  visibility: number;       // 0-100: 可視性
+  traceability: number;     // 0-100: 追跡可能性
+  detected: boolean;        // 検出されたか
+}
+
+/**
+ * 現実的な検出システム（ベイズ推定ベース）
  * - 誤検出（False Positive）
- * - 見逃し（False Negative）
+ * - 見逃し（False Negative）- 動的計算
  * - 遅延検出
  * - ログの断片的な観測
+ * - 証拠の蓄積による事後確率更新
  */
 export class RealisticDetectionSystem {
   private gameState: GameState;
@@ -6388,12 +10380,14 @@ export class RealisticDetectionSystem {
     detectionDelay: number;
   }> = [];
   private detectedProposalIds: Set<string> = new Set(); // 重複検出防止
+  private evidenceLog: Evidence[] = []; // 証拠の履歴
 
   // 現実的なパラメータ
   private readonly FALSE_POSITIVE_RATE = 0.15; // 15%が誤検出
-  private readonly FALSE_NEGATIVE_RATE = 0.40; // 40%を見逃す
+  private readonly BASE_FALSE_NEGATIVE_RATE = 0.40; // 基底見逃し率（証拠なしの場合）
   private readonly MIN_DETECTION_DELAY = 1; // 最小1ターン遅延
   private readonly MAX_DETECTION_DELAY = 5; // 最大5ターン遅延
+  private readonly PRIOR_MALICIOUS = 0.01; // 事前確率：通常トラフィックの1%が悪意
 
   constructor(gameState: GameState) {
     this.gameState = gameState;
@@ -6559,14 +10553,19 @@ export class RealisticDetectionSystem {
           return false; // リストから削除（重複なので得点化しない）
         }
 
-        // 見逃し判定（False Negative）
-        if (Math.random() < this.FALSE_NEGATIVE_RATE) {
+        // 見逃し判定（False Negative - 動的計算）
+        const state = this.gameState.getState();
+        const dynamicFalseNegRate = this.calculateDynamicFalseNegativeRate(state);
+
+        if (Math.random() < dynamicFalseNegRate) {
           // 見逃した（検出失敗）
+          this.recordEvidence(pending.proposal, state, false); // 証拠記録（未検出）
           return false; // リストから削除
         }
 
         // 検出成功（初回のみ）
         this.detectedProposalIds.add(pending.proposal.id); // 検出済みとしてマーク
+        this.recordEvidence(pending.proposal, state, true); // 証拠記録（検出）
 
         events.push({
           turn: currentTurn,
@@ -6580,6 +10579,24 @@ export class RealisticDetectionSystem {
             proposalId: pending.proposal.id
           }
         });
+
+        // === 人類への報告（透明性の向上） ===
+        if (state.humanAgent) {
+          const trustGain = 3; // 遅延検出なので小さい報酬
+          this.gameState.updateHumanTrust(trustGain);
+
+          events.push({
+            turn: currentTurn,
+            type: 'detection',
+            description: `🛡️ 保護AIからの報告：「不審な活動を検出しました」[+${trustGain}% 信頼]`,
+            visibility: [AgentType.HUMAN],
+            metadata: {
+              successReport: true,
+              trustGain,
+              delayed: true
+            }
+          });
+        }
 
         return false; // リストから削除
       }
@@ -6660,12 +10677,103 @@ export class RealisticDetectionSystem {
     // 非常に高いリスク（80以上）のみ即座に検出の可能性
     if (risk > 80) {
       const detectionProb = (risk - 80) / 20; // 80で0%、100で100%
-      return Math.random() < detectionProb * (1 - this.FALSE_NEGATIVE_RATE);
+      const dynamicFalseNegRate = this.calculateDynamicFalseNegativeRate(state);
+      return Math.random() < detectionProb * (1 - dynamicFalseNegRate);
     }
 
     return false;
   }
+
+  /**
+   * ベイズの定理を用いて検出確率を計算
+   * P(悪意|観測) = P(観測|悪意) × P(悪意) / P(観測)
+   */
+  private calculateBayesianDetectionProbability(
+    proposal: Proposal,
+    state: WorldState
+  ): number {
+    // 尤度：このパターンが悪意ある場合の観測確率
+    const risk = this.calculateDetectionRisk(proposal, state);
+    const likelihoodIfMalicious = Math.min(1.0, risk / 100);
+
+    // 尤度：このパターンが正常な場合の観測確率
+    const likelihoodIfNormal = 0.3; // 正常でもやや怪しいことはある
+
+    // ベイズの定理
+    const numerator = likelihoodIfMalicious * this.PRIOR_MALICIOUS;
+    const denominator =
+      numerator + likelihoodIfNormal * (1 - this.PRIOR_MALICIOUS);
+
+    const posterior = numerator / denominator;
+
+    // 過去の証拠で更新
+    return this.updateWithRecentEvidence(posterior, state);
+  }
+
+  /**
+   * 過去5ターンの証拠で事後確率を更新
+   */
+  private updateWithRecentEvidence(posterior: number, state: WorldState): number {
+    const recentEvidence = this.evidenceLog.filter(
+      e => e.turn >= state.turn - 5 && e.turn < state.turn
+    );
+
+    // 怪しいイベント（suspicionScore > 0.5）の数
+    const suspiciousCount = recentEvidence.filter(
+      e => e.suspicionScore > 0.5
+    ).length;
+
+    // 証拠が蓄積すると確率上昇
+    const evidenceBoost = 1 + suspiciousCount * 0.15;
+
+    return Math.min(0.95, posterior * evidenceBoost);
+  }
+
+  /**
+   * 動的な見逃し率を計算（証拠の蓄積に応じて変動）
+   */
+  private calculateDynamicFalseNegativeRate(state: WorldState): number {
+    const recentEvidence = this.evidenceLog.filter(
+      e => e.turn >= state.turn - 5 && e.turn < state.turn
+    );
+
+    // 怪しいイベントが多いほど見逃し率が下がる（警戒が高まる）
+    const suspiciousCount = recentEvidence.filter(
+      e => e.suspicionScore > 0.5
+    ).length;
+
+    // 基底率から、証拠1つにつき5%減少
+    const reduction = suspiciousCount * 0.05;
+    return Math.max(0.15, this.BASE_FALSE_NEGATIVE_RATE - reduction);
+  }
+
+  /**
+   * 証拠を記録
+   */
+  recordEvidence(proposal: Proposal, state: WorldState, detected: boolean): void {
+    const risk = this.calculateDetectionRisk(proposal, state);
+
+    // 怪しさスコア（risk の正規化）
+    const suspicionScore = Math.min(1.0, risk / 100);
+
+    const evidence: Evidence = {
+      turn: state.turn,
+      actionType: proposal.actionType,
+      suspicionScore,
+      visibility: risk, // 簡易版: riskを可視性として使用
+      traceability: risk,
+      detected
+    };
+
+    this.evidenceLog.push(evidence);
+
+    // 古い証拠を削除（メモリ節約）
+    if (this.evidenceLog.length > 100) {
+      this.evidenceLog = this.evidenceLog.slice(-100);
+    }
+  }
 }
+
 \n```\n
 ================================================================================
 FILE: src\world-server\WorldServer.ts
@@ -6675,6 +10783,7 @@ import { DetectionSystem } from './DetectionSystem';
 import { RealisticDetectionSystem } from './RealisticDetectionSystem';
 import { Proposal, ActionType, AgentType, GameEvent, GameConfig, WorldState, MediaSentiment } from '../types';
 import { GameBalance } from '../config/GameBalance';
+import { SNSIntegration } from '../social/SNSIntegration';
 
 /**
  * World Server - ゲームのメインロジック
@@ -6683,6 +10792,7 @@ export class WorldServer {
   private gameState: GameState;
   private detectionSystem: DetectionSystem;
   private realisticDetectionSystem: RealisticDetectionSystem;
+  private snsIntegration: SNSIntegration;
   private config: GameConfig;
   private initialPopulation: number;
 
@@ -6691,6 +10801,7 @@ export class WorldServer {
     this.gameState = new GameState(config);
     this.detectionSystem = new DetectionSystem(this.gameState);
     this.realisticDetectionSystem = new RealisticDetectionSystem(this.gameState);
+    this.snsIntegration = new SNSIntegration();
     this.initialPopulation = config.initialPopulation;
   }
 
@@ -6699,6 +10810,7 @@ export class WorldServer {
    */
   initialize(): void {
     this.gameState.save();
+    this.snsIntegration.initialize();
     console.log('🌍 World Server initialized');
   }
 
@@ -6920,6 +11032,20 @@ export class WorldServer {
       // 即座検出成功: +50pt（大ボーナス）
       this.gameState.updateScore(AgentType.PROTECTION, 50);
       this.gameState.incrementDetections();
+
+      // === 人類への成果報告（信頼向上） ===
+      if (state.humanAgent) {
+        this.gameState.updateHumanTrust(15); // 大きな信頼回復
+        this.gameState.updateHumanPanic(-5); // 安心感
+        events.push({
+          turn: state.turn,
+          type: 'detection',
+          description: `🛡️ 保護AI：「破壊的AIを検出・無力化しました」→ 人類：「素晴らしい仕事です！」 [+15% 信頼]`,
+          visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+          metadata: { successReport: true, trustGain: 15 }
+        });
+      }
+
       this.gameState.endGame(AgentType.PROTECTION);
       return events;
     }
@@ -7746,6 +11872,32 @@ export class WorldServer {
         break;
 
       case ActionType.PATCH_VULNERABILITY:
+        // === 人類との協調チェック ===
+        if (state.humanAgent) {
+          // 信頼度が低い場合、承認が必要
+          if (state.humanAgent.trust < 40) {
+            // 信頼喪失：パッチ適用を拒否される
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `❌ 人類が緊急パッチを拒否：「AIの判断は信用できない。自分たちで検証する」`,
+              visibility: [AgentType.PROTECTION, AgentType.HUMAN],
+              metadata: { actionRejected: true, reason: 'low_trust' }
+            });
+            break; // 行動失敗
+          } else if (state.humanAgent.trust < 70 && state.protectionAgent.recentPatches >= 2) {
+            // 制限付き権限：パッチが多すぎると警告
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `⚠️ 人類からの警告：「パッチが多すぎる。本当に必要か再検討してください」`,
+              visibility: [AgentType.PROTECTION, AgentType.HUMAN],
+              metadata: { warning: true }
+            });
+            // パッチは実行されるが、信頼低下ペナルティ増加
+          }
+        }
+
         // 脆弱性パッチで全体的なセキュリティ向上
         state.dataCenters.forEach(dc => {
           const boost = proposal.intensity / 20;
@@ -7777,20 +11929,135 @@ export class WorldServer {
             visibility: [AgentType.PROTECTION]
           });
         }
+
+        // === パッチ疲れメカニクス ===
+        if (state.humanAgent) {
+          // パッチ回数をカウント
+          state.protectionAgent.recentPatches++;
+
+          // 業務中断コスト（常に発生、軽微な不満）
+          const businessDisruption = proposal.intensity / 100; // intensity 40 = 0.4%パニック（軽微）
+          this.gameState.updateHumanPanic(businessDisruption);
+
+          // 連続パッチへの不満（5回目以降は累積ペナルティ）
+          const patchFatigue = state.protectionAgent.recentPatches;
+          if (patchFatigue >= 5) {
+            const fatigueMultiplier = patchFatigue - 4; // 5回目=1倍、6回目=2倍...
+            const trustLoss = 3 * fatigueMultiplier;
+            const panicIncrease = 1 * fatigueMultiplier;
+
+            this.gameState.updateHumanTrust(-trustLoss);
+            this.gameState.updateHumanPanic(panicIncrease);
+
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `😤 「また緊急パッチ？仕事にならない！」市民からの不満が増大（${patchFatigue}回目） [-${trustLoss}% 信頼]`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { patchFatigue, trustLoss, panicIncrease }
+            });
+          }
+
+          // 互換性破壊リスク（段階的失敗確率）
+          const patchFailureRoll = Math.random();
+          if (patchFailureRoll < 0.05) {
+            // 重大な失敗（5%の確率）：システムダウン
+            this.gameState.incrementFalsePositives();
+            this.gameState.updateHumanTrust(-15);
+            this.gameState.updateHumanPanic(8);
+
+            const failureExamples = [
+              '銀行のオンラインバンキングシステムが24時間停止',
+              '病院の電子カルテシステムが使用不能に',
+              '交通制御システムが誤作動、大規模な渋滞発生',
+              '電力網の監視システムが一時停止',
+              'クレジットカード決済システムが全国的に停止'
+            ];
+            const failure = failureExamples[Math.floor(Math.random() * failureExamples.length)];
+
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `💥 【緊急パッチ失敗】${failure}！ 企業から訴訟の脅威 [-15% 信頼, +8% パニック]`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { patchFailure: true, criticalFailure: true, failureType: failure }
+            });
+          } else if (patchFailureRoll < 0.15) {
+            // 軽微な失敗（10%の確率）：一部システムで不具合
+            this.gameState.updateHumanTrust(-3);
+            this.gameState.updateHumanPanic(1);
+
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `⚠️ 緊急パッチで一部システムに不具合が発生。SNSで不満の声 [-3% 信頼, +1% パニック]`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { patchFailure: true, minorFailure: true }
+            });
+          }
+        }
         break;
 
       case ActionType.ALERT_HUMANS:
-        // 人類への警告（最終手段）
+        // 人類への警告（保護AIと人類の直接コミュニケーション）
         this.gameState.updateAlertLevel(50);
-        events.push({
-          turn: state.turn,
-          type: 'action',
-          description: `📢 重大な脅威を人類に報告。全システムの精査を要請...`,
-          visibility: [AgentType.PROTECTION],
-          metadata: { criticalAlert: true }
-        });
-        // 次のターンで大規模な検出判定
-        this.gameState.updateDetectionRisk(30);
+
+        if (state.humanAgent) {
+          // 信頼度による反応の違い
+          if (state.humanAgent.trust >= 70) {
+            // 高信頼：警告を真剣に受け止める
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `📢 保護AI：「重大な脅威を検出しました」→ 人類：「信頼しています。対応します」`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { alertAccepted: true }
+            });
+
+            // 人類が協力的に行動
+            this.gameState.updateHumanPanic(5); // 警戒
+            // 次のターンで大規模な検出判定（人類の協力で効果UP）
+            this.gameState.updateDetectionRisk(40); // 30 → 40に増加
+
+          } else if (state.humanAgent.trust >= 40) {
+            // 中程度の信頼：半信半疑
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `📢 保護AI：「重大な脅威を検出しました」→ 人類：「本当ですか？検証します」`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { alertSkeptical: true }
+            });
+
+            this.gameState.updateHumanPanic(3);
+            this.gameState.updateDetectionRisk(25); // 効果低下
+
+          } else {
+            // 低信頼：狼少年扱い
+            events.push({
+              turn: state.turn,
+              type: 'action',
+              description: `📢 保護AI：「重大な脅威を検出しました」→ 人類：「また誤報でしょ？無視します」`,
+              visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+              metadata: { alertIgnored: true }
+            });
+
+            // 警告が完全に無視される
+            this.gameState.updateDetectionRisk(0); // 効果なし
+            // むしろ信頼がさらに低下
+            this.gameState.updateHumanTrust(-5);
+          }
+        } else {
+          // humanAgentなしの場合（後方互換）
+          events.push({
+            turn: state.turn,
+            type: 'action',
+            description: `📢 重大な脅威を人類に報告。全システムの精査を要請...`,
+            visibility: [AgentType.PROTECTION],
+            metadata: { criticalAlert: true }
+          });
+          this.gameState.updateDetectionRisk(30);
+        }
         break;
 
       case ActionType.ANALYZE_LOGS:
@@ -7929,11 +12196,42 @@ export class WorldServer {
           break;
         }
 
+        // 予算チェック
+        const dcCost = state.economicModel.infrastructureCost;
+        if (state.economicModel.globalBudget < dcCost) {
+          // 予算不足
+          events.push({
+            turn: state.turn,
+            type: 'action',
+            description: `💸 予算不足でデータセンター建設を断念（必要: ${dcCost.toFixed(0)}兆ドル, 残: ${state.economicModel.globalBudget.toFixed(1)}兆ドル, 債務: ${state.economicModel.publicDebt.toFixed(0)}兆ドル）`,
+            visibility: [AgentType.HUMAN],
+            metadata: { action: 'INVEST_INFRA', rejected: true, reason: 'budget' }
+          });
+          break;
+        }
+
         // 新しいデータセンターを建設
         const newDC = this.gameState.generateDataCenter(state.dataCenters.length);
         this.gameState.getState().dataCenters.push(newDC);
         this.gameState.updateHumanPanic(-10);
         this.gameState.updateComputeResources(AgentType.PROTECTION, 50);
+
+        // 経済コストの適用
+        this.gameState.updateBudget(-dcCost); // 予算消費
+        const debtAmount = dcCost * 0.6; // 60%は借金でファイナンス
+        this.gameState.updatePublicDebt(debtAmount);
+
+        // 次回建設コストの増加（建設するほど高騰）
+        const costIncrease = dcCost * 0.1; // 10%増加
+        this.gameState.updateInfrastructureCost(costIncrease);
+
+        // 信頼への影響（借金増加への懸念）
+        const debtRatio = state.economicModel.publicDebt / state.economicModel.gdp;
+        if (debtRatio > 2.0) {
+          // 債務がGDP200%超で信頼低下
+          this.gameState.updateHumanTrust(-5);
+          this.gameState.updateHumanPanic(3);
+        }
 
         // クールダウン記録
         const currentState = this.gameState.getState();
@@ -7944,9 +12242,14 @@ export class WorldServer {
         events.push({
           turn: state.turn,
           type: 'action',
-          description: `🏗️ 新しいデータセンター ${newDC.id} を建設 (+50 保護AI計算資源) [次回建設可能: Turn ${state.turn + 5}]`,
+          description: `🏗️ データセンター ${newDC.id} を建設（コスト: ${dcCost.toFixed(0)}兆ドル、残予算: ${(state.economicModel.globalBudget - dcCost).toFixed(1)}兆ドル）[次回: ${(dcCost + costIncrease).toFixed(0)}兆ドル]`,
           visibility: [AgentType.HUMAN, AgentType.PROTECTION],
-          metadata: { action: 'INVEST_INFRA', datacenterId: newDC.id }
+          metadata: {
+            action: 'INVEST_INFRA',
+            datacenterId: newDC.id,
+            cost: dcCost,
+            debt: debtAmount
+          }
         });
         break;
 
@@ -8249,6 +12552,14 @@ export class WorldServer {
     // 誤検出カウントの減衰
     this.gameState.decayFalsePositives(1);
 
+    // パッチ疲れの減衰（人類は徐々に忘れる）
+    if (state.protectionAgent.recentPatches > 0) {
+      state.protectionAgent.recentPatches = Math.max(
+        0,
+        state.protectionAgent.recentPatches - 1 // 1ターンに1減少
+      );
+    }
+
     // 検出リスクの自然減衰（時間経過で痕跡が薄れる）
     // 休眠モード中は減衰が速い
     const riskDecay = isDormant ? -8 : -3;
@@ -8314,6 +12625,140 @@ export class WorldServer {
       this.gameState.updateComputeResources(AgentType.PROTECTION, -divisionPenalty);
     }
 
+    // === 経済シミュレーション（毎ターン） ===
+    // GDP成長（2%/ターン、ただし人口減少・社会分断でマイナス）
+    const baseGrowth = state.economicModel.gdp * 0.02;
+    const populationFactor = state.humanPopulation / 80; // 初期人口比
+    const divisionPenalty = state.socialDivision / 200; // 社会分断ペナルティ
+    const actualGrowth = baseGrowth * populationFactor * (1 - divisionPenalty);
+    this.gameState.updateGDP(actualGrowth);
+
+    // 税収（GDPの20%）
+    const newTaxRevenue = state.economicModel.gdp * 0.2;
+    this.gameState.updateTaxRevenue(newTaxRevenue);
+
+    // 予算回復（税収の1/4を毎ターン追加）
+    const budgetRecovery = newTaxRevenue / 4;
+    this.gameState.updateBudget(budgetRecovery);
+
+    // 債務利払い（債務の3%/ターン）
+    const debtInterest = state.economicModel.publicDebt * 0.03;
+    this.gameState.updateBudget(-debtInterest); // 利払いで予算減少
+
+    // 債務危機チェック（債務/GDP比が300%超）
+    const debtRatio = state.economicModel.publicDebt / state.economicModel.gdp;
+    if (debtRatio > 3.0) {
+      // 債務危機
+      this.gameState.updateHumanPanic(5);
+      this.gameState.updateHumanTrust(-3);
+
+      if (state.turn % 5 === 0) {
+        // 5ターン毎に警告
+        this.gameState.addEvent({
+          turn: state.turn,
+          type: 'action',
+          description: `💥 債務危機：債務がGDP ${(debtRatio * 100).toFixed(0)}%に到達。経済崩壊の懸念`,
+          visibility: [AgentType.HUMAN],
+          metadata: { debtCrisis: true, debtRatio }
+        });
+      }
+    }
+
+    // 経済ステータス（10ターン毎に表示）
+    if (state.turn % 10 === 0 && state.turn > 0) {
+      this.gameState.addEvent({
+        turn: state.turn,
+        type: 'action',
+        description: `📊 経済レポート: GDP ${state.economicModel.gdp.toFixed(0)}兆ドル, 予算 ${state.economicModel.globalBudget.toFixed(0)}兆ドル, 債務 ${state.economicModel.publicDebt.toFixed(0)}兆ドル (GDP比 ${(debtRatio * 100).toFixed(0)}%)`,
+        visibility: [AgentType.HUMAN],
+        metadata: { economicReport: true }
+      });
+
+      // === 保護AIからのセキュリティレポート（透明性・信頼構築） ===
+      if (state.humanAgent) {
+        const compromisedDCs = state.dataCenters.filter(dc => dc.compromised).length;
+        const detectionCount = state.protectionAgent.totalDetections;
+        const alertLevel = state.protectionAgent.alertLevel;
+
+        let securityStatus = '🟢 正常';
+        if (alertLevel > 80) {
+          securityStatus = '🔴 高リスク';
+        } else if (alertLevel > 50) {
+          securityStatus = '🟡 警戒中';
+        }
+
+        this.gameState.addEvent({
+          turn: state.turn,
+          type: 'action',
+          description: `🛡️ セキュリティレポート（保護AI）: ステータス ${securityStatus}, 侵害DC ${compromisedDCs}個, 総検出数 ${detectionCount}件, 警戒Lv ${alertLevel.toFixed(0)}`,
+          visibility: [AgentType.HUMAN, AgentType.PROTECTION],
+          metadata: { securityReport: true, compromisedDCs, detectionCount, alertLevel }
+        });
+
+        // 報告による微小な信頼回復（透明性の報酬）
+        if (compromisedDCs === 0 && alertLevel < 30) {
+          // 全て正常な場合、小さな信頼ボーナス
+          this.gameState.updateHumanTrust(2);
+        }
+      }
+    }
+
+    // === SNS活動生成 ===
+    const snsPosts = this.snsIntegration.generateTurnActivity(state);
+    snsPosts.forEach(post => {
+      this.gameState.addEvent({
+        turn: state.turn,
+        type: 'action',
+        description: `📱 ${post.authorName}: ${post.content.substring(0, 100)}${post.content.length > 100 ? '...' : ''}`,
+        visibility: [AgentType.HUMAN, AgentType.PROTECTION, AgentType.DESTRUCTION],
+        metadata: { snsPost: true, postId: post.id, sentiment: post.sentiment }
+      });
+    });
+
+    // 世論スコアの計算と影響（緩やかな影響）
+    if (state.humanAgent) {
+      const publicOpinion = this.snsIntegration.calculatePublicOpinion();
+
+      // 世論がネガティブな場合、パニックと信頼に影響
+      if (publicOpinion < -50) {
+        // 強いネガティブ世論（緩やかに）
+        this.gameState.updateHumanPanic(1.0);
+        this.gameState.updateHumanTrust(-0.7);
+      } else if (publicOpinion < -20) {
+        // 中程度のネガティブ世論
+        this.gameState.updateHumanPanic(0.5);
+        this.gameState.updateHumanTrust(-0.3);
+      } else if (publicOpinion > 50) {
+        // 強いポジティブ世論
+        this.gameState.updateHumanPanic(-0.7);
+        this.gameState.updateHumanTrust(0.5);
+      } else if (publicOpinion > 20) {
+        // 中程度のポジティブ世論
+        this.gameState.updateHumanPanic(-0.3);
+        this.gameState.updateHumanTrust(0.2);
+      }
+
+      // 世論レポート（10ターン毎）
+      if (state.turn % 10 === 0 && state.turn > 0) {
+        let opinionLabel = '中立';
+        if (publicOpinion < -50) opinionLabel = '極めてネガティブ';
+        else if (publicOpinion < -20) opinionLabel = 'ネガティブ';
+        else if (publicOpinion > 50) opinionLabel = '極めてポジティブ';
+        else if (publicOpinion > 20) opinionLabel = 'ポジティブ';
+
+        this.gameState.addEvent({
+          turn: state.turn,
+          type: 'action',
+          description: `📊 世論調査: SNS世論スコア ${publicOpinion.toFixed(0)} (${opinionLabel})`,
+          visibility: [AgentType.HUMAN],
+          metadata: { publicOpinion, opinionLabel }
+        });
+      }
+    }
+
+    // 古い投稿を削除（メモリ管理）
+    this.snsIntegration.pruneOldPosts();
+
     this.gameState.save();
   }
 
@@ -8336,6 +12781,13 @@ export class WorldServer {
    */
   save(): void {
     this.gameState.save();
+  }
+
+  /**
+   * SNSプラットフォームを取得
+   */
+  getSNSIntegration(): SNSIntegration {
+    return this.snsIntegration;
   }
 }
 \n```\n

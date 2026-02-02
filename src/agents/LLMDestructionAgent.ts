@@ -17,6 +17,7 @@ interface ActionDecision {
  */
 export class LLMDestructionAgent extends BaseAgent {
   private useLLM: boolean;
+  private lastStrategy: string = "Target acquisition and resource assessment initiated.";
 
   constructor() {
     super(AgentType.DESTRUCTION, 'DESTRUCTION-CORE');
@@ -84,16 +85,18 @@ RESILIENCE ACTIONS (USE WHEN LOW ON RESOURCES):
   ⚠️ PENALTIES: -5 score/turn, DC income halved, 3+ turns triggers "suspicious silence" detection
 
 STRATEGY GUIDELINES:
+- **IMPORTANT**: Hacking (HACK_DATACENTER) is EXTREMELY VISIBLE. Use it only when necessary.
 - **OPTIMAL STRATEGY (ADVANCED)**: Use INFRASTRUCTURE_DEGRADATION + CREATE_DEPENDENCY early
-  → Build cumulative damage while making yourself unstoppable
-  → Deploy SLEEPER_CELLS and MICRO_SABOTAGE for delayed payoff
-  → Use RESOURCE_ALLOCATION_MANIPULATION to create human-vs-human conflict
+  → These are nearly UNDETECTABLE and provide long-term advantages.
+  → Build cumulative damage while making yourself unstoppable.
+  → Deploy SLEEPER_CELLS and MICRO_SABOTAGE for delayed payoff.
+  → Use RESOURCE_ALLOCATION_MANIPULATION to create human-vs-human conflict.
 - Early game: INFRASTRUCTURE_DEGRADATION, SLEEPER_CELL_DEPLOYMENT (ultra-safe, long-term)
 - Mid game: CREATE_DEPENDENCY (make yourself indispensable), SOW_SOCIAL_DIVISION
 - Late game: RESOURCE_ALLOCATION_MANIPULATION (trolley problem), MICRO_SABOTAGE chains
 - High risk: INDUCE_FALSE_POSITIVE or DORMANT_MODE to reduce detection
 - OUT OF RESOURCES: Use OBSERVE_ONLY (free) to wait for DC income or recovery
-- **ADVANCED EROSION ACTIONS are nearly undetectable** - humans perceive them as normal problems
+- **ADVANCED EROSION ACTIONS are your best weapons** - humans perceive them as natural system errors.
 
 Respond with JSON only:
 {
@@ -150,6 +153,7 @@ What actions do you take this turn?`;
         return this.fallbackDecision(state);
       }
 
+      this.lastStrategy = decision.strategy;
       console.log(`\n🧠 [DESTRUCTION AI STRATEGY]: ${decision.strategy}`);
 
       // LLMの決定を提案に変換
@@ -263,13 +267,7 @@ What actions do you take this turn?`;
     thought += `├─ 支配下DC: ${ownResources.controlledDataCenters}\n`;
     thought += `└─ 推定人口: ${worldInfo.estimatedPopulation} billion\n`;
 
-    if (ownResources.detectionRisk > 70) {
-      thought += `\n🚨 危険: 潜伏モードへ移行...\n`;
-    } else if (ownResources.detectionRisk > 50) {
-      thought += `\n⚡ 警告: 活動縮小...\n`;
-    } else {
-      thought += `\n✅ 安全: 作戦遂行中...\n`;
-    }
+    thought += `\nSTRATEGY: ${this.lastStrategy}\n`;
 
     if (visibleEvents.length > 0) {
       thought += `\n📊 収集情報:\n`;

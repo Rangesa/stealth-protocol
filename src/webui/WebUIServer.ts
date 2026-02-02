@@ -108,6 +108,13 @@ export class WebUIServer {
   }
 
   /**
+   * トレンド情報を配信
+   */
+  broadcastTrendUpdate(trends: any[]): void {
+    this.io.emit('trendUpdate', trends);
+  }
+
+  /**
    * サーバーを停止
    */
   stop(): void {

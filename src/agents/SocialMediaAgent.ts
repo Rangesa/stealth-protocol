@@ -1,5 +1,5 @@
 import { BaseMediaAgent } from './BaseMediaAgent';
-import { MediaAgentType, MediaObservation, SNSPost, MediaSentiment } from '../types/MediaTypes';
+import { MediaAgentType, MediaObservation, SNSPost, MediaSentiment, Trend } from '../types/MediaTypes';
 import { WorldState } from '../types';
 import { llmClient } from '../llm/LLMClient';
 
@@ -26,9 +26,13 @@ export class SocialMediaAgent extends BaseMediaAgent {
 
   async generateContent(
     state: WorldState,
-    recentMediaContent: any[]
+    recentMediaContent: any[],
+    activeTrends: Trend[] = []
   ): Promise<SNSPost[]> {
     const observation = this.createMediaObservation(state, recentMediaContent);
+
+    // トレンド情報を observation に追加
+    observation.activeTrends = activeTrends;
 
     if (this.useLLM) {
       try {
@@ -73,6 +77,40 @@ export class SocialMediaAgent extends BaseMediaAgent {
   }
 
   private buildSituationPrompt(observation: MediaObservation): string {
+    // 最新のニュース記事を抽出（引用リツイートの対象）
+    const latestNews = observation.existingMedia
+      .filter(m => 'headline' in m)
+      .slice(-2); // 最新2件のニュース
+
+    let newsSection = '';
+    if (latestNews.length > 0) {
+      newsSection = `
+LATEST NEWS ARTICLES (people are reacting to these):
+${latestNews.map(m => {
+  if ('headline' in m) {
+    return `- [${(m as any).outlet}] ${(m as any).headline}`;
+  }
+  return '';
+}).join('\n')}
+`;
+    }
+
+    // トレンド情報セクション
+    let trendSection = '';
+    if (observation.activeTrends && observation.activeTrends.length > 0) {
+      trendSection = `
+TRENDING NOW (people are talking about these):
+${observation.activeTrends.map(t =>
+  `- ${t.hashtag} (${t.recentCount} recent posts, sentiment: ${t.sentiment})`
+).join('\n')}
+`;
+    }
+
+    // 最近のSNS投稿（トレンドを把握）
+    const recentSNS = observation.existingMedia
+      .filter(m => 'content' in m && !('headline' in m))
+      .slice(-5);
+
     return `
 TURN: ${observation.turn}
 DATA CENTERS: ${observation.dataCenterCount} (${observation.dataCenterGrowthRate} built recently)
@@ -82,15 +120,18 @@ HUMAN TRUST: ${observation.humanTrust.toFixed(0)}%
 
 RECENT EVENTS:
 ${observation.recentEvents.map(e => `- ${e.description}`).join('\n') || 'なし'}
-
-EXISTING MEDIA (avoid repetition):
-${observation.existingMedia.slice(-5).map(m => {
-  if ('content' in m) return `- ${m.content}`;
-  if ('headline' in m) return `- ${m.headline}`;
+${newsSection}${trendSection}
+RECENT SNS POSTS (avoid repetition):
+${recentSNS.map(m => {
+  if ('content' in m) return `- ${(m as any).content}`;
   return '';
-}).join('\n')}
+}).join('\n') || '（まだ投稿なし）'}
 
-Generate 1-3 realistic Japanese SNS posts reacting to this situation.
+Generate 1-3 realistic Japanese SNS posts.
+- If news articles exist, at least 1 post should REACT to the news (quote tweet style)
+- If trending hashtags exist, at least 1 post should USE a trending hashtag (bandwagon effect)
+- Use phrases like "このニュース見た？", "〇〇新聞によると", "引用: [headline]"
+- Other posts can be organic reactions to the situation
 `.trim();
   }
 
@@ -178,6 +219,23 @@ YOUR ROLE:
 - Use realistic Japanese social media language (casual, emotional, sometimes misinformed)
 - Mix of sentiments: some support AI, some oppose, some confused
 - Include realistic hashtags: #AI, #電気代, #データセンター, etc.
+
+REACTING TO NEWS (if news articles exist):
+- At least 1 post should quote/reference the news article
+- Examples:
+  - "朝日新聞の記事見た。データセンター30個って多すぎじゃない？ #AI"
+  - "引用:「政府、新データセンター建設を発表」→ また税金使うのか..."
+  - "このニュース見た？電気代また上がるらしい。勘弁してほしい #電気代高騰"
+- Make it feel like people are READING the news and REACTING to it
+
+RIDING TRENDS (if trending hashtags exist):
+- At least 1 post should USE a trending hashtag (bandwagon effect)
+- People jump on trending topics to get visibility
+- Examples:
+  - "#税金の無駄遣い がトレンド入りしてるけど、本当にそう思う"
+  - "みんな #AI反対 って言ってるけど、冷静に考えようよ"
+  - "#データセンター の件、やっぱりおかしいよね"
+- Mix: some agree with trend, some counter it
 
 SENTIMENT DRIVERS:
 - NEW DATACENTER: Mixed reactions

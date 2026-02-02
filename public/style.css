@@ -587,3 +587,110 @@ main {
     line-height: 1.5;
     font-style: italic;
 }
+
+/* ============================================
+   TRENDING TOPICS PANEL
+   ============================================ */
+
+.trending-panel {
+    grid-column: 1 / -1;
+    min-height: 150px;
+    max-height: 200px;
+    overflow: hidden;
+    margin-top: 10px;
+}
+
+.trending-content {
+    max-height: 120px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.no-trends {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+    padding: 20px;
+}
+
+/* トレンドアイテム */
+.trend-item {
+    background: rgba(0, 243, 255, 0.05);
+    border-left: 3px solid var(--neon-cyan);
+    padding: 10px 15px;
+    margin-bottom: 8px;
+    animation: slideIn 0.4s ease;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.trend-item:hover {
+    background: rgba(0, 243, 255, 0.1);
+    border-left-color: var(--neon-yellow);
+}
+
+.trend-item.negative {
+    border-left-color: var(--neon-red);
+    background: rgba(255, 0, 60, 0.05);
+}
+
+.trend-item.positive {
+    border-left-color: var(--neon-green);
+    background: rgba(0, 255, 136, 0.05);
+}
+
+.trend-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 5px;
+}
+
+.trend-hashtag {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--neon-cyan);
+}
+
+.trend-item.negative .trend-hashtag {
+    color: var(--neon-red);
+}
+
+.trend-item.positive .trend-hashtag {
+    color: var(--neon-green);
+}
+
+.trend-count {
+    font-size: 13px;
+    color: #888;
+}
+
+.trend-fire {
+    font-size: 18px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.trend-stats {
+    display: flex;
+    gap: 15px;
+    font-size: 12px;
+    color: #666;
+}
+
+.trend-stat {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+}

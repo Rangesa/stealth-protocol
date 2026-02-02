@@ -229,6 +229,24 @@ export class RealisticDetectionSystem {
           }
         });
 
+        // === 人類への報告（透明性の向上） ===
+        if (state.humanAgent) {
+          const trustGain = 3; // 遅延検出なので小さい報酬
+          this.gameState.updateHumanTrust(trustGain);
+
+          events.push({
+            turn: currentTurn,
+            type: 'detection',
+            description: `🛡️ 保護AIからの報告：「不審な活動を検出しました」[+${trustGain}% 信頼]`,
+            visibility: [AgentType.HUMAN],
+            metadata: {
+              successReport: true,
+              trustGain,
+              delayed: true
+            }
+          });
+        }
+
         return false; // リストから削除
       }
 

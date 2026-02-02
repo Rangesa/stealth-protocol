@@ -80,13 +80,13 @@ export const GameBalance = {
       intensityMultiplier: 0.2,
     },
     HACK_DATACENTER: {
-      securityDivisor: 3, // セキュリティ / この値
-      intensityMultiplier: 0.15,
-      failurePenalty: 8, // 失敗時の追加リスク
+      securityDivisor: 4, // 3 -> 4 に緩和（分母を大きくしてリスク減）
+      intensityMultiplier: 0.12, // 0.15 -> 0.12 に緩和
+      failurePenalty: 5, // 8 -> 5 に緩和
     },
     SPREAD_MISINFORMATION: {
-      base: 3,
-      intensityMultiplier: 0.1,
+      base: 2, // 3 -> 2
+      intensityMultiplier: 0.08, // 0.1 -> 0.08
     },
     SUBTLE_SABOTAGE: {
       base: 2,
@@ -100,8 +100,8 @@ export const GameBalance = {
 
   // リスク倍率
   riskMultipliers: {
-    alertLevelDivisor: 150, // 警戒レベル / この値
-    detectionRiskDivisor: 300, // 既存リスク / この値（雪だるま式）
+    alertLevelDivisor: 200, // 150 -> 200 (警戒レベルによる増幅を抑える)
+    detectionRiskDivisor: 400, // 300 -> 400 (累積リスクによる増幅を抑える)
   },
 
   // =========================================
@@ -213,7 +213,7 @@ export const GameBalance = {
     suspiciousEventPoints: 5, // 1イベントで+5
 
     // 減衰
-    naturalDecay: 5, // 毎ターン-5
+    naturalDecay: 8, // 5 -> 8 (毎ターンの自動リスク減少を強化)
 
     // 閾値
     thresholds: {

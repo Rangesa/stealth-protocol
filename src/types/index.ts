@@ -140,6 +140,7 @@ export interface WorldState {
     recentFalsePositives: number;     // 最近の誤検出数
     totalResourcesSpent: number;      // 総消費リソース
     totalDetections: number;          // 総検出数
+    recentPatches: number;            // 最近のパッチ適用回数（パッチ疲れ）
   };
 
   humanAgent?: {

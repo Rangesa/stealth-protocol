@@ -54,6 +54,27 @@ export interface CorporateStatement {
 
 export type MediaContent = SNSPost | NewsArticle | CorporateStatement;
 
+/**
+ * トレンド情報
+ */
+export interface Trend {
+  hashtag: string;        // "#税金の無駄遣い"
+  count: number;          // 累計出現回数
+  recentCount: number;    // 直近3ターンの出現回数
+  sentiment: MediaSentiment; // トレンドの平均センチメント
+  isTrending: boolean;    // トレンド化しているか（count >= 5）
+  firstSeenTurn: number;  // 初めて登場したターン
+  peakTurn: number;       // 最も盛り上がったターン
+}
+
+/**
+ * トレンド追跡データ
+ */
+export interface TrendData {
+  trends: Trend[];
+  topTrends: Trend[];     // 上位5件のトレンド
+}
+
 export interface MediaObservation {
   turn: number;
   recentEvents: GameEvent[];
@@ -68,4 +89,5 @@ export interface MediaObservation {
   majorIncident?: boolean;
   newDataCenter?: boolean;
   regulationEvent?: boolean;
+  activeTrends?: Trend[];          // 現在のトレンド（エージェントへのフィードバック用）
 }

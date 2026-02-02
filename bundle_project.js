@@ -24,6 +24,7 @@ const IGNORE_FILES = [
     'package-lock.json', // 長すぎるので除外（必要なら外してください）
     '.DS_Store',
     '.env',               // セキュリティのため除外
+    '.env.example'
 ];
 
 // 対象とする拡張子（これ以外は無視、ただしINCLUDE_FILESにあるものは含める）

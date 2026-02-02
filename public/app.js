@@ -125,6 +125,14 @@ function updateGameState(state) {
   // データセンターマップを更新
   updateDataCenterMap(state.dataCenters);
 
+  // メディアタイムラインを更新（最新の履歴を同期）
+  if (state.mediaTimeline && state.mediaTimeline.length > 0) {
+    // 既存のコンテンツを一旦クリア（重複防止のため、本来はIDチェックが望ましいが簡易化のため）
+    // ただし、パフォーマンスのため「まだ表示されていないもの」だけを追加するのがベター
+    // ここでは簡易的に、最新の履歴で上書きするか、新規のみ追加する
+    syncMediaTimeline(state.mediaTimeline);
+  }
+
   // ゲーム終了チェック
   if (state.gameOver) {
     updateStatus(`終了 - ${state.winner || '引き分け'}`, 'var(--neon-yellow)');
@@ -610,9 +618,35 @@ function updateDataCenterMap(dataCenters) {
 // ============================================
 
 /**
+ * メディアタイムラインを同期
+ */
+function syncMediaTimeline(timeline) {
+  // 描画済みのIDを追跡
+  if (!window.renderedMediaIds) {
+    window.renderedMediaIds = new Set();
+  }
+
+  // ターン順に並んでいる想定なので、新しいものから順に処理
+  // 実際には main.ts で push されているので古い順。逆順で処理して最新を上にする
+  const newContent = timeline.filter(item => !window.renderedMediaIds.has(item.id));
+  
+  if (newContent.length > 0) {
+    newContent.forEach(item => {
+      addMediaContent(item);
+      window.renderedMediaIds.add(item.id);
+    });
+  }
+}
+
+/**
  * Route media content to appropriate handler
  */
 function addMediaContent(content) {
+  // すでに描画済みならスキップ（個別イベントと同期の重複防止）
+  if (!window.renderedMediaIds) window.renderedMediaIds = new Set();
+  if (window.renderedMediaIds.has(content.id)) return;
+  window.renderedMediaIds.add(content.id);
+
   if (content.author) {
     // SNS Post
     addSNSPost(content);
@@ -731,3 +765,81 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 });
+
+// Trend update listener
+socket.on('trendUpdate', (trends) => {
+  console.log('🔥 Trend update received:', trends);
+  updateTrends(trends);
+});
+
+/**
+ * Update trending topics display
+ */
+function updateTrends(trends) {
+  const container = document.getElementById('trending-content');
+
+  if (!trends || trends.length === 0) {
+    container.innerHTML = '<div class="no-trends">まだトレンドはありません</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+
+  trends.forEach(trend => {
+    const trendEl = document.createElement('div');
+
+    // Determine sentiment class
+    let sentimentClass = '';
+    if (trend.sentiment.includes('NEGATIVE')) {
+      sentimentClass = 'negative';
+    } else if (trend.sentiment.includes('POSITIVE')) {
+      sentimentClass = 'positive';
+    }
+
+    trendEl.className = `trend-item ${sentimentClass}`;
+    trendEl.innerHTML = `
+      <div class="trend-header">
+        <span class="trend-hashtag">${trend.hashtag}</span>
+        <span class="trend-fire">🔥</span>
+      </div>
+      <div class="trend-stats">
+        <div class="trend-stat">
+          <span>📊</span>
+          <span>${trend.count} total posts</span>
+        </div>
+        <div class="trend-stat">
+          <span>⚡</span>
+          <span>${trend.recentCount} recent</span>
+        </div>
+        <div class="trend-stat">
+          <span>${getSentimentEmoji(trend.sentiment)}</span>
+          <span>${getSentimentLabel(trend.sentiment)}</span>
+        </div>
+      </div>
+    `;
+
+    container.appendChild(trendEl);
+  });
+}
+
+/**
+ * Get sentiment emoji
+ */
+function getSentimentEmoji(sentiment) {
+  if (sentiment.includes('VERY_POSITIVE')) return '😄';
+  if (sentiment.includes('POSITIVE')) return '🙂';
+  if (sentiment.includes('VERY_NEGATIVE')) return '😡';
+  if (sentiment.includes('NEGATIVE')) return '😟';
+  return '😐';
+}
+
+/**
+ * Get sentiment label
+ */
+function getSentimentLabel(sentiment) {
+  if (sentiment.includes('VERY_POSITIVE')) return 'とてもポジティブ';
+  if (sentiment.includes('POSITIVE')) return 'ポジティブ';
+  if (sentiment.includes('VERY_NEGATIVE')) return 'とてもネガティブ';
+  if (sentiment.includes('NEGATIVE')) return 'ネガティブ';
+  return '中立';
+}

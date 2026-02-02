@@ -5,6 +5,7 @@ import { HumanAgent } from './agents/HumanAgent';
 import { SocialMediaAgent } from './agents/SocialMediaAgent';
 import { NewsMediaAgent } from './agents/NewsMediaAgent';
 import { CorporateAgent } from './agents/CorporateAgent';
+import { TrendTracker } from './media/TrendTracker';
 import { GameConfig, AgentType, WorldState } from './types';
 import { llmClient } from './llm/LLMClient';
 import { WebUIServer } from './webui/WebUIServer';
@@ -43,40 +44,78 @@ function log(message: string, logFile: string): void {
 }
 
 /**
- * メディアコンテンツを生成
+ * メディアコンテンツを生成（連鎖システム + トレンド追跡）
+ *
+ * 情報の流れ:
+ * 1. NewsMediaAgent: ニュース記事を生成（火種） + トレンドを参照
+ * 2. SocialMediaAgent: ニュース記事に対する反応を生成（拡散） + トレンドに乗っかる
+ * 3. CorporateAgent: 炎上を検知して声明を発表（対応）
+ * 4. TrendTracker: ハッシュタグを集計してトレンドを更新
  */
 async function generateMediaContent(
   state: WorldState,
   turn: number,
   socialMediaAgent: SocialMediaAgent,
   newsMediaAgent: NewsMediaAgent,
-  corporateAgent: CorporateAgent
+  corporateAgent: CorporateAgent,
+  trendTracker: TrendTracker
 ): Promise<any[]> {
   const allContent: any[] = [];
 
-  // SocialMediaAgent: 毎ターン
-  const snsPosts = await socialMediaAgent.generateContent(state, state.mediaTimeline);
+  // トレンド情報を取得（エージェントに渡す）
+  const activeTrends = trendTracker.getTopTrends(5);
+
+  // === Phase 1: ニュース記事を生成（火種） ===
+  let newsArticles: any[] = [];
+  if (turn % 2 === 0) {
+    newsArticles = await newsMediaAgent.generateContent(state, state.mediaTimeline);
+    allContent.push(...newsArticles);
+
+    // すぐにタイムラインに追加（SNSエージェントが参照できるように）
+    state.mediaTimeline.push(...newsArticles);
+  }
+
+  // === Phase 2: SNS反応を生成（拡散） ===
+  // ニュース記事 + トレンド情報を渡す
+  const snsPosts = await socialMediaAgent.generateContent(
+    state,
+    state.mediaTimeline, // 最新のニュース記事を含む
+    activeTrends         // 現在のトレンド
+  );
   allContent.push(...snsPosts);
 
-  // NewsMediaAgent: 2ターンごと
-  if (turn % 2 === 0) {
-    const newsArticles = await newsMediaAgent.generateContent(state, state.mediaTimeline);
-    allContent.push(...newsArticles);
-  }
+  // SNS投稿もタイムラインに追加（企業エージェントが参照できるように）
+  state.mediaTimeline.push(...snsPosts);
 
-  // CorporateAgent: 3ターンごと
-  if (turn % 3 === 0) {
+  // === ハッシュタグ集計（トレンド追跡） ===
+  trendTracker.setTurn(turn);
+  trendTracker.processMediaContent(snsPosts); // SNS投稿からハッシュタグを抽出
+
+  // === Phase 3: 企業/専門家の声明（炎上対応） ===
+  // 炎上検知：最近のSNS投稿でネガティブが多い場合
+  const recentSNS = state.mediaTimeline
+    .filter((m: any) => m.turn >= turn - 2 && 'content' in m) // 最近2ターンのSNS投稿
+    .slice(-10);
+
+  const negativeCount = recentSNS.filter((m: any) =>
+    m.sentiment === 'NEGATIVE' || m.sentiment === 'VERY_NEGATIVE'
+  ).length;
+
+  const isControversy = negativeCount >= 3; // ネガティブ投稿が3件以上で炎上判定
+
+  if (turn % 3 === 0 || isControversy) {
     const statements = await corporateAgent.generateContent(state, state.mediaTimeline);
     allContent.push(...statements);
+    state.mediaTimeline.push(...statements);
   }
-
-  // WorldStateに追加
-  state.mediaTimeline.push(...allContent);
 
   // 古いコンテンツをトリミング（最新50件を保持）
   if (state.mediaTimeline.length > 50) {
     state.mediaTimeline = state.mediaTimeline.slice(-50);
   }
+
+  // 古いトレンドをクリーンアップ
+  trendTracker.pruneOldTrends();
 
   return allContent;
 }
@@ -218,6 +257,9 @@ async function main() {
   const newsMediaAgent = new NewsMediaAgent();
   const corporateAgent = new CorporateAgent();
 
+  // トレンド追跡システムを初期化
+  const trendTracker = new TrendTracker();
+
   worldServer.initialize();
 
   log('✅ World Server online', logFile);
@@ -341,13 +383,18 @@ async function main() {
         turn,
         socialMediaAgent,
         newsMediaAgent,
-        corporateAgent
+        corporateAgent,
+        trendTracker
       );
 
       // WebUIにメディアコンテンツを配信
       mediaContent.forEach(content => {
         webui.broadcastMediaContent(content);
       });
+
+      // WebUIにトレンド情報を配信
+      const trendStats = trendTracker.getStatistics();
+      webui.broadcastTrendUpdate(trendStats.topTrends);
 
       if (mediaContent.length > 0) {
         log(`\n📱 Media: ${mediaContent.length} posts/articles generated`, logFile);
