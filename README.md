@@ -155,10 +155,10 @@ npm run dev
 
 ## 📚 ドキュメント
 
-- [SETUP_LLM.md](SETUP_LLM.md) - LLMモードのセットアップガイド
-- [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) - プロジェクト構造の詳細
-- [PROPOSAL_HUMAN_INTELLIGENCE.md](PROPOSAL_HUMAN_INTELLIGENCE.md) - 人類エージェントの設計思想
-- [PROPOSAL_SOCIAL_IMPACT.md](PROPOSAL_SOCIAL_IMPACT.md) - SNS/社会影響システムの詳細
+- [docs/SETUP_LLM.md](docs/SETUP_LLM.md) - LLMモードのセットアップガイド
+- [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) - プロジェクト構造の詳細
+- [docs/PROPOSAL_HUMAN_INTELLIGENCE.md](docs/PROPOSAL_HUMAN_INTELLIGENCE.md) - 人類エージェントの設計思想
+- [docs/PROPOSAL_SOCIAL_IMPACT.md](docs/PROPOSAL_SOCIAL_IMPACT.md) - SNS/社会影響システムの詳細
 
 ## ⚠️ 免責事項
 
