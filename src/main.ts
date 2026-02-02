@@ -8,7 +8,7 @@ import { CorporateAgent } from './agents/CorporateAgent';
 import { GameConfig, AgentType, WorldState } from './types';
 import { llmClient } from './llm/LLMClient';
 import { WebUIServer } from './webui/WebUIServer';
-import { logger, metrics, log } from './utils/Logger';
+import { logger, metrics } from './utils/Logger';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -250,6 +250,8 @@ async function main() {
 
   // ゲームループ
   for (let turn = 1; turn <= config.maxTurns; turn++) {
+    const turnStartTime = Date.now(); // ターン開始時刻
+
     if (worldServer.isGameOver()) {
       break;
     }
@@ -359,12 +361,24 @@ async function main() {
     // WebUIに状態を配信
     webui.broadcastGameState(worldServer.getState());
 
+    // ターン実行時間を記録
+    const turnDuration = Date.now() - turnStartTime;
+    metrics.recordTurn(turn, turnDuration);
+
     // 少し遅延（WebUIの更新と読みやすさのため）
     await new Promise(resolve => setTimeout(resolve, 3000));
   }
 
   // 最終結果を表示
   displayResults(worldServer, logFile);
+
+  // メトリクスサマリーを出力
+  log('\n', logFile);
+  metrics.logSummary();
+
+  // メトリクスをファイルに保存
+  const metricsFile = path.join(path.dirname(logFile), `metrics-${Date.now()}.json`);
+  metrics.saveToFile(metricsFile);
 
   const state = worldServer.getState();
   const winner = worldServer.getWinner();

@@ -148,6 +148,23 @@ export interface WorldState {
     regulationStrength: number; // 規制強度（リソースペナルティ倍率）
     lastAction?: ActionType;    // 最後に実行したアクション
     lastInfraTurn: number;      // 最後にインフラ投資したターン（-999で未実施）
+
+    // 派閥システム
+    factions: {
+      government: {
+        influence: number;       // 影響力 (0-100)
+        stance: 'hawkish' | 'dovish'; // タカ派 or ハト派
+      };
+      corporations: {
+        influence: number;       // 影響力 (0-100)
+        profitPriority: number;  // 利潤優先度 (0-100)
+      };
+      civilSociety: {
+        influence: number;       // 影響力 (0-100)
+        privacyPriority: number; // プライバシー優先度 (0-100)
+      };
+    };
+    dominantFaction: 'government' | 'corporations' | 'civilSociety'; // 支配的派閥
   };
 
   // 高度な破壊メカニクス

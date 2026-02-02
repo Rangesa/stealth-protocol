@@ -58,7 +58,24 @@ export class GameState {
         trust: this.config.initialTrust || 60,
         regulationStrength: 0,
         lastAction: undefined,
-        lastInfraTurn: -999 // 未実施
+        lastInfraTurn: -999, // 未実施
+
+        // 派閥システム初期化
+        factions: {
+          government: {
+            influence: 40,      // 政府は中程度の影響力
+            stance: 'dovish'    // 初期はハト派（穏健）
+          },
+          corporations: {
+            influence: 35,      // 企業も強い影響力
+            profitPriority: 70  // 利潤重視
+          },
+          civilSociety: {
+            influence: 25,      // 市民団体はやや弱い
+            privacyPriority: 80 // プライバシー重視
+          }
+        },
+        dominantFaction: 'government' // 初期は政府が支配的
       } : undefined,
 
       // 高度な破壊メカニクス
@@ -353,6 +370,48 @@ export class GameState {
   setHumanLastAction(action: ActionType): void {
     if (!this.state.humanAgent) return;
     this.state.humanAgent.lastAction = action;
+  }
+
+  /**
+   * 派閥の影響力を更新
+   */
+  updateFactionInfluence(faction: 'government' | 'corporations' | 'civilSociety', delta: number): void {
+    if (!this.state.humanAgent) return;
+    this.state.humanAgent.factions[faction].influence = Math.max(
+      0,
+      Math.min(100, this.state.humanAgent.factions[faction].influence + delta)
+    );
+
+    // 影響力が最も高い派閥を支配的派閥に設定
+    this.updateDominantFaction();
+  }
+
+  /**
+   * 支配的派閥を更新
+   */
+  updateDominantFaction(): void {
+    if (!this.state.humanAgent) return;
+
+    const factions = this.state.humanAgent.factions;
+    let maxInfluence = 0;
+    let dominant: 'government' | 'corporations' | 'civilSociety' = 'government';
+
+    (['government', 'corporations', 'civilSociety'] as const).forEach(faction => {
+      if (factions[faction].influence > maxInfluence) {
+        maxInfluence = factions[faction].influence;
+        dominant = faction;
+      }
+    });
+
+    this.state.humanAgent.dominantFaction = dominant;
+  }
+
+  /**
+   * 政府のスタンスを変更
+   */
+  setGovernmentStance(stance: 'hawkish' | 'dovish'): void {
+    if (!this.state.humanAgent) return;
+    this.state.humanAgent.factions.government.stance = stance;
   }
 
   /**

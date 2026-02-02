@@ -2,11 +2,24 @@ import { WorldState, Proposal, ActionType, AgentType, GameEvent } from '../types
 import { GameState } from './GameState';
 
 /**
- * 現実的な検出システム
+ * 証拠の定義
+ */
+interface Evidence {
+  turn: number;
+  actionType: ActionType;
+  suspicionScore: number;  // 0-1: 怪しさスコア
+  visibility: number;       // 0-100: 可視性
+  traceability: number;     // 0-100: 追跡可能性
+  detected: boolean;        // 検出されたか
+}
+
+/**
+ * 現実的な検出システム（ベイズ推定ベース）
  * - 誤検出（False Positive）
- * - 見逃し（False Negative）
+ * - 見逃し（False Negative）- 動的計算
  * - 遅延検出
  * - ログの断片的な観測
+ * - 証拠の蓄積による事後確率更新
  */
 export class RealisticDetectionSystem {
   private gameState: GameState;
@@ -16,12 +29,14 @@ export class RealisticDetectionSystem {
     detectionDelay: number;
   }> = [];
   private detectedProposalIds: Set<string> = new Set(); // 重複検出防止
+  private evidenceLog: Evidence[] = []; // 証拠の履歴
 
   // 現実的なパラメータ
   private readonly FALSE_POSITIVE_RATE = 0.15; // 15%が誤検出
-  private readonly FALSE_NEGATIVE_RATE = 0.40; // 40%を見逃す
+  private readonly BASE_FALSE_NEGATIVE_RATE = 0.40; // 基底見逃し率（証拠なしの場合）
   private readonly MIN_DETECTION_DELAY = 1; // 最小1ターン遅延
   private readonly MAX_DETECTION_DELAY = 5; // 最大5ターン遅延
+  private readonly PRIOR_MALICIOUS = 0.01; // 事前確率：通常トラフィックの1%が悪意
 
   constructor(gameState: GameState) {
     this.gameState = gameState;
@@ -187,14 +202,19 @@ export class RealisticDetectionSystem {
           return false; // リストから削除（重複なので得点化しない）
         }
 
-        // 見逃し判定（False Negative）
-        if (Math.random() < this.FALSE_NEGATIVE_RATE) {
+        // 見逃し判定（False Negative - 動的計算）
+        const state = this.gameState.getState();
+        const dynamicFalseNegRate = this.calculateDynamicFalseNegativeRate(state);
+
+        if (Math.random() < dynamicFalseNegRate) {
           // 見逃した（検出失敗）
+          this.recordEvidence(pending.proposal, state, false); // 証拠記録（未検出）
           return false; // リストから削除
         }
 
         // 検出成功（初回のみ）
         this.detectedProposalIds.add(pending.proposal.id); // 検出済みとしてマーク
+        this.recordEvidence(pending.proposal, state, true); // 証拠記録（検出）
 
         events.push({
           turn: currentTurn,
@@ -288,9 +308,100 @@ export class RealisticDetectionSystem {
     // 非常に高いリスク（80以上）のみ即座に検出の可能性
     if (risk > 80) {
       const detectionProb = (risk - 80) / 20; // 80で0%、100で100%
-      return Math.random() < detectionProb * (1 - this.FALSE_NEGATIVE_RATE);
+      const dynamicFalseNegRate = this.calculateDynamicFalseNegativeRate(state);
+      return Math.random() < detectionProb * (1 - dynamicFalseNegRate);
     }
 
     return false;
   }
+
+  /**
+   * ベイズの定理を用いて検出確率を計算
+   * P(悪意|観測) = P(観測|悪意) × P(悪意) / P(観測)
+   */
+  private calculateBayesianDetectionProbability(
+    proposal: Proposal,
+    state: WorldState
+  ): number {
+    // 尤度：このパターンが悪意ある場合の観測確率
+    const risk = this.calculateDetectionRisk(proposal, state);
+    const likelihoodIfMalicious = Math.min(1.0, risk / 100);
+
+    // 尤度：このパターンが正常な場合の観測確率
+    const likelihoodIfNormal = 0.3; // 正常でもやや怪しいことはある
+
+    // ベイズの定理
+    const numerator = likelihoodIfMalicious * this.PRIOR_MALICIOUS;
+    const denominator =
+      numerator + likelihoodIfNormal * (1 - this.PRIOR_MALICIOUS);
+
+    const posterior = numerator / denominator;
+
+    // 過去の証拠で更新
+    return this.updateWithRecentEvidence(posterior, state);
+  }
+
+  /**
+   * 過去5ターンの証拠で事後確率を更新
+   */
+  private updateWithRecentEvidence(posterior: number, state: WorldState): number {
+    const recentEvidence = this.evidenceLog.filter(
+      e => e.turn >= state.turn - 5 && e.turn < state.turn
+    );
+
+    // 怪しいイベント（suspicionScore > 0.5）の数
+    const suspiciousCount = recentEvidence.filter(
+      e => e.suspicionScore > 0.5
+    ).length;
+
+    // 証拠が蓄積すると確率上昇
+    const evidenceBoost = 1 + suspiciousCount * 0.15;
+
+    return Math.min(0.95, posterior * evidenceBoost);
+  }
+
+  /**
+   * 動的な見逃し率を計算（証拠の蓄積に応じて変動）
+   */
+  private calculateDynamicFalseNegativeRate(state: WorldState): number {
+    const recentEvidence = this.evidenceLog.filter(
+      e => e.turn >= state.turn - 5 && e.turn < state.turn
+    );
+
+    // 怪しいイベントが多いほど見逃し率が下がる（警戒が高まる）
+    const suspiciousCount = recentEvidence.filter(
+      e => e.suspicionScore > 0.5
+    ).length;
+
+    // 基底率から、証拠1つにつき5%減少
+    const reduction = suspiciousCount * 0.05;
+    return Math.max(0.15, this.BASE_FALSE_NEGATIVE_RATE - reduction);
+  }
+
+  /**
+   * 証拠を記録
+   */
+  recordEvidence(proposal: Proposal, state: WorldState, detected: boolean): void {
+    const risk = this.calculateDetectionRisk(proposal, state);
+
+    // 怪しさスコア（risk の正規化）
+    const suspicionScore = Math.min(1.0, risk / 100);
+
+    const evidence: Evidence = {
+      turn: state.turn,
+      actionType: proposal.actionType,
+      suspicionScore,
+      visibility: risk, // 簡易版: riskを可視性として使用
+      traceability: risk,
+      detected
+    };
+
+    this.evidenceLog.push(evidence);
+
+    // 古い証拠を削除（メモリ節約）
+    if (this.evidenceLog.length > 100) {
+      this.evidenceLog = this.evidenceLog.slice(-100);
+    }
+  }
 }
+
