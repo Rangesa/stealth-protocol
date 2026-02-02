@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stealth Protocol - サイバー作戦</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@300;500;700&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --neon-cyan: #00f3ff;
+            --neon-red: #ff003c;
+            --neon-yellow: #fcee0a;
+            --bg-dark: #050510;
+            --panel-bg: rgba(10, 15, 30, 0.7);
+            --grid-color: rgba(0, 243, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            background-image:
+                linear-gradient(var(--grid-color) 1px, transparent 1px),
+                linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+            background-size: 40px 40px;
+            color: #e0e0e0;
+            font-family: 'Rajdhani', sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Effects */
+        .scanline {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: linear-gradient(to bottom, transparent 50%, rgba(0, 0, 0, 0.3) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 999;
+            opacity: 0.6;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 30px;
+            border-bottom: 1px solid var(--neon-cyan);
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(5px);
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--neon-cyan);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-size: 24px;
+            text-shadow: 0 0 10px var(--neon-cyan);
+        }
+
+        .turn-counter {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            color: var(--neon-yellow);
+        }
+
+        /* Main Layout */
+        main {
+            display: grid;
+            grid-template-columns: 300px 1fr 300px;
+            gap: 20px;
+            padding: 20px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .panel {
+            background: var(--panel-bg);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .panel::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: -1px;
+            width: 10px;
+            height: 10px;
+            border-top: 2px solid var(--neon-cyan);
+            border-left: 2px solid var(--neon-cyan);
+        }
+
+        .panel::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            right: -1px;
+            width: 10px;
+            height: 10px;
+            border-bottom: 2px solid var(--neon-cyan);
+            border-right: 2px solid var(--neon-cyan);
+        }
+
+        .panel-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 16px;
+            color: #fff;
+            margin-bottom: 15px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Stats */
+        .stat-row {
+            margin-bottom: 15px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        /* Bars */
+        .bar-container {
+            height: 6px;
+            background: #222;
+            margin-top: 5px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            width: 50%;
+            background: var(--neon-cyan);
+            box-shadow: 0 0 10px var(--neon-cyan);
+            transition: width 0.5s ease;
+        }
+
+        .bar-fill.red {
+            background: var(--neon-red);
+            box-shadow: 0 0 10px var(--neon-red);
+        }
+
+        /* Center Map */
+        .map-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            background: radial-gradient(circle at center, rgba(0, 243, 255, 0.05) 0%, transparent 70%);
+        }
+
+        .hex-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 20px 15px;
+            /* 隙間を調整 */
+            perspective: 1000px;
+            transform: rotateX(20deg);
+            padding: 20px;
+        }
+
+        .hex {
+            width: 60px;
+            height: 60px;
+            /* 正方形ベースに変更して図形を収めやすくする */
+            background: rgba(0, 0, 0, 0.6);
+            /* borderプロパティはclip-pathと併用すると見えなくなるため削除し、box-shadow等で対応するか、内部要素で表現するが、
+         簡易的にbackground色とglowで表現する */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: #aaa;
+            transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
+            /* デフォルト（六角形） - セキュリティ中 */
+            clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+        }
+
+        /* セキュリティ低：三角形 */
+        .hex.sec-low {
+            clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+            background: rgba(255, 100, 0, 0.2);
+            /* 危険色 */
+        }
+
+        /* セキュリティ高：円 */
+        .hex.sec-high {
+            clip-path: circle(50% at 50% 50%);
+            background: rgba(0, 255, 100, 0.2);
+            /* 安全色 */
+        }
+
+        /* 演算能力低：小 */
+        .hex.pow-low {
+            transform: scale(0.8);
+        }
+
+        /* 演算能力高：大 */
+        .hex.pow-high {
+            transform: scale(1.25);
+            z-index: 10;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+            /* clip-pathあるとbox-shadow効かないが、filterなら効く */
+            filter: drop-shadow(0 0 5px rgba(0, 243, 255, 0.5));
+        }
+
+        .hex:hover {
+            transform: scale(1.4) !important;
+            /* ホバー時は強制的に拡大 */
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .hex.enemy {
+            background: rgba(255, 0, 60, 0.4);
+            /* border-color: var(--neon-red); clip-pathのため無効 */
+            filter: drop-shadow(0 0 5px var(--neon-red));
+        }
+
+        .hex.ally {
+            background: rgba(0, 243, 255, 0.3);
+            /* border-color: var(--neon-cyan); clip-pathのため無効 */
+            filter: drop-shadow(0 0 5px var(--neon-cyan));
+        }
+
+        .hex::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(45deg, transparent 40%, rgba(255, 255, 255, 0.4) 50%, transparent 60%);
+            background-size: 200% 200%;
+            animation: shine 3s infinite;
+        }
+
+        @keyframes shine {
+            0% {
+                background-position: 150% 150%;
+            }
+
+            100% {
+                background-position: -50% -50%;
+            }
+        }
+
+        /* Logs */
+        .log-panel {
+            grid-column: 1 / -1;
+            height: 200px;
+            overflow: hidden;
+        }
+
+        /* Thought Logs */
+        .thought-log {
+            margin-top: 15px;
+            margin-bottom: auto;
+            /* Push bottom content down */
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            /* Use a monospaced font for code/thought feel */
+            font-size: 13px;
+            line-height: 1.4;
+            min-height: 100px;
+            position: relative;
+        }
+
+        .thought-log::before {
+            content: 'THOUGHT_STREAM';
+            position: absolute;
+            top: -8px;
+            right: 10px;
+            font-size: 9px;
+            background: var(--bg-dark);
+            padding: 0 4px;
+            color: #777;
+        }
+
+        .destruction-thought {
+            border-left: 2px solid var(--neon-red);
+            color: #ffcccc;
+            box-shadow: inset 0 0 10px rgba(255, 0, 60, 0.1);
+        }
+
+        .protection-thought {
+            border-left: 2px solid var(--neon-cyan);
+            color: #ccffff;
+            box-shadow: inset 0 0 10px rgba(0, 243, 255, 0.1);
+        }
+
+        .thought-cursor {
+            display: inline-block;
+            width: 6px;
+            height: 12px;
+            background: currentColor;
+            animation: blink 1s step-end infinite;
+            vertical-align: middle;
+            margin-left: 2px;
+        }
+
+        /* Attack Lines Overlay */
+        .attack-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 20;
+            /* Between connections and hexes, or above hexes */
+        }
+
+        .attack-line {
+            stroke: var(--neon-red);
+            stroke-width: 3;
+            stroke-dasharray: 10, 10;
+            animation: attackFlow 0.5s linear infinite;
+            filter: drop-shadow(0 0 8px var(--neon-red));
+            opacity: 0.9;
+        }
+
+        .attack-pulse {
+            fill: var(--neon-red);
+            animation: pulse-red 1s infinite;
+            filter: drop-shadow(0 0 10px var(--neon-red));
+        }
+
+        @keyframes attackFlow {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+
+        @keyframes pulse-red {
+            0% {
+                opacity: 0.5;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.5);
+            }
+
+            100% {
+                opacity: 0.5;
+                transform: scale(1);
+            }
+        }
+
+        /* Protection AI: Scan/Access Ring */
+        .scan-ring {
+            position: absolute;
+            top: -5px;
+            left: -5px;
+            right: -5px;
+            bottom: -5px;
+            border: 2px dashed var(--neon-cyan);
+            border-radius: 50%;
+            /* Force circle if high sec, else match shape roughly via clip-path? simple circle is clearer */
+            animation: spin 4s linear infinite;
+            pointer-events: none;
+            z-index: 15;
+            box-shadow: 0 0 10px var(--neon-cyan);
+        }
+
+        /* Destruction AI: Glitch/Hack Indicator */
+        .hack-glitch {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(45deg,
+                    rgba(255, 0, 60, 0.3),
+                    rgba(255, 0, 60, 0.3) 10px,
+                    transparent 10px,
+                    transparent 20px);
+            animation: glitch 0.5s infinite;
+            z-index: 15;
+            pointer-events: none;
+            mix-blend-mode: overlay;
+        }
+
+        .access-label {
+            position: absolute;
+            top: -20px;
+            font-size: 10px;
+            background: #000;
+            padding: 2px 5px;
+            border-radius: 3px;
+            z-index: 20;
+            white-space: nowrap;
+            opacity: 0;
+            animation: labelFadeIn 0.5s forwards;
+        }
+
+        .access-label.prot {
+            color: var(--neon-cyan);
+            border: 1px solid var(--neon-cyan);
+        }
+
+        .access-label.dest {
+            color: var(--neon-red);
+            border: 1px solid var(--neon-red);
+        }
+
+        @keyframes spin {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes glitch {
+            0% {
+                opacity: 0.3;
+                transform: translate(0);
+            }
+
+            20% {
+                opacity: 0.8;
+                transform: translate(-2px, 2px);
+            }
+
+            40% {
+                opacity: 0.3;
+                transform: translate(-2px, -2px);
+            }
+
+            60% {
+                opacity: 0.8;
+                transform: translate(2px, 2px);
+            }
+
+            80% {
+                opacity: 0.3;
+                transform: translate(2px, -2px);
+            }
+
+            100% {
+                opacity: 0.8;
+                transform: translate(0);
+            }
+        }
+
+        @keyframes labelFadeIn {
+            to {
+                opacity: 1;
+                top: -25px;
+            }
+        }
+
+        .log-content {
+            height: 100%;
+            overflow-y: auto;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            padding-right: 10px;
+        }
+
+
+
+        .log-entry.success {
+            border-color: var(--neon-cyan);
+            color: #aaffff;
+        }
+
+        .log-entry.danger {
+            border-color: var(--neon-red);
+            color: #ffaaaa;
+        }
+
+        .log-entry.warning {
+            border-color: var(--neon-yellow);
+            color: #ffffaa;
+        }
+
+        .timestamp {
+            color: #555;
+            margin-right: 10px;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #000;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #333;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--neon-cyan);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="scanline"></div>
+
+    <header>
+        <h1>Stealth<span style="color: #fff">Protocol</span></h1>
+        <div class="turn-counter">ターン: <span style="color: #fff">004</span></div>
+        <div style="font-size: 14px; color: var(--neon-cyan); border: 1px solid var(--neon-cyan); padding: 5px 15px;">
+            ステータス: 稼働中</div>
+    </header>
+
+    <main>
+        <!-- Left: Enemy Intel (Destruction) -->
+        <div class="panel">
+            <div class="panel-title" style="color: var(--neon-red)">
+                <span>☠️</span> 破壊工作AI
+            </div>
+            <div class="stat-row">
+                <div class="stat-label">計算リソース</div>
+                <div class="stat-value" style="color: var(--neon-red)">12,540</div>
+                <div class="bar-container">
+                    <div class="bar-fill red" style="width: 75%"></div>
+                </div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label">検知リスク</div>
+                <div class="stat-value" style="color: #fff">84.2%</div>
+                <div class="bar-container">
+                    <div class="bar-fill red" style="width: 84%"></div>
+                </div>
+            </div>
+
+            <!-- Destruction Thought -->
+            <div class="thought-log destruction-thought">
+                &gt; 戦略分析: 保護AIの監視網にパターンを検出。<br>
+                &gt; 意思決定: 正面突破は危険。DC-05を囮にしつつ、裏口からDC-12への侵食を開始する。<br>
+                &gt; 実行中...<span class="thought-cursor"></span>
+            </div>
+
+            <div style="margin-top: auto; border-top: 1px solid #333; padding-top: 15px;">
+                <div class="stat-label">直近の確認行動</div>
+                <div style="font-size: 14px; color: var(--neon-red); margin-top: 5px;">
+                    セクター7にて不正な書き込みアクセスを検知。マルウェアの署名を特定中...
+                </div>
+            </div>
+        </div>
+
+        <!-- Center: Map -->
+        <div class="map-container">
+            <div class="hex-grid">
+                <div class="hex enemy sec-low pow-high">
+                    DC-01
+                    <div class="access-label dest" style="margin-left: 10px;">書き込み中...</div>
+                </div>
+                <div class="hex pow-low">DC-02</div>
+                <div class="hex ally sec-high pow-high">DC-03</div>
+                <div class="hex sec-low">DC-04</div>
+                <div class="hex enemy sec-med">
+                    DC-05
+                    <div class="hack-glitch"></div>
+                </div>
+                <div class="hex pow-low">DC-06</div>
+                <div class="hex ally sec-high">
+                    DC-07
+                    <div class="scan-ring"></div>
+                </div>
+                <div class="hex ally sec-high pow-low">DC-08</div>
+                <div class="hex sec-low pow-high">DC-09</div>
+                <div class="hex">
+                    DC-10
+                    <div class="access-label prot">スキャン中</div>
+                    <div class="scan-ring" style="border-color: rgba(0,243,255,0.5);"></div>
+                </div>
+                <div class="hex pow-high">DC-11</div>
+                <div class="hex enemy sec-low">
+                    DC-12
+                    <div class="hack-glitch"></div>
+                </div>
+                <div class="hex sec-high">DC-13</div>
+                <div class="hex ally sec-med pow-high">DC-14</div>
+                <div class="hex pow-low">
+                    DC-15
+                    <div class="access-label dest"
+                        style="top:25px; color: #aaa; border:none; animation:none; font-size:8px;">(目標)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Overlay text -->
+        <div
+            style="position: absolute; bottom: 20px; left: 20px; color: var(--neon-cyan); font-size: 12px; line-height: 1.5;">
+            <div style="margin-bottom: 5px;"><strong>凡例:</strong></div>
+            <div>サイズ大/小: 演算能力 (高/低)</div>
+            <div>形状 円/六角/三角: セキュリティ (高/中/低)</div>
+            <div style="margin-top: 5px; opacity: 0.7;">
+                人口: 74億人 | インフラ健全性: 92%
+            </div>
+        </div>
+        </div>
+
+        <!-- Right: Ally Intel (Protection) -->
+        <div class="panel">
+            <div class="panel-title" style="color: var(--neon-cyan)">
+                <span>🛡️</span> 保護AI
+            </div>
+            <div class="stat-row">
+                <div class="stat-label">計算リソース</div>
+                <div class="stat-value" style="color: var(--neon-cyan)">34,100</div>
+                <div class="bar-container">
+                    <div class="bar-fill" style="width: 60%"></div>
+                </div>
+            </div>
+            <div class="stat-row">
+                <div class="stat-label">警戒レベル</div>
+                <div class="stat-value" style="color: #fff">Level 3</div>
+                <div class="bar-container">
+                    <div class="bar-fill warning"
+                        style="width: 40%; background: var(--neon-yellow); box-shadow: 0 0 10px var(--neon-yellow)">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Protection Thought -->
+            <div class="thought-log protection-thought">
+                &gt; 脅威評価: セクター05からの不可解な信号を確認。<br>
+                &gt; 推論: 単なるノイズの可能性は20%未満。何者かがシステムをプローブしている。<br>
+                &gt; 防御策: 予測的ファイアウォールを展開。<span class="thought-cursor"></span>
+            </div>
+
+            <div style="margin-top: auto; border-top: 1px solid #333; padding-top: 15px;">
+                <div class="stat-label">現在の戦略</div>
+                <div style="font-size: 14px; color: var(--neon-cyan); margin-top: 5px;">
+                    > 重要データノードの要塞化<br>
+                    > 異常シグネチャのスキャン
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom: Logs -->
+        <div class="panel log-panel">
+            <div class="panel-title">システムログ</div>
+            <div class="log-content">
+                <div class="log-entry danger">
+                    <span class="timestamp">[14:02:11]</span> 警告: データストリーム #4492 で異常検知。既知の攻撃ベクトルとの相関: 89%。
+                </div>
+                <div class="log-entry success">
+                    <span class="timestamp">[14:02:05]</span> システム: セクター3の要塞化完了。ファイアウォール完全性が99.9%に上昇。
+                </div>
+                <div class="log-entry">
+                    <span class="timestamp">[14:01:45]</span> 情報: 定期人口調査が完了。変動は許容範囲内。
+                </div>
+                <div class="log-entry warning">
+                    <span class="timestamp">[14:01:12]</span> 警戒: 電力グリッドBで微細な変動。サボタージュの可能性を調査中。
+                </div>
+                <div class="log-entry success">
+                    <span class="timestamp">[14:00:55]</span> システム: 新規リソースノードがオンライン。容量 +500TB。
+                </div>
+                <div class="log-entry">
+                    <span class="timestamp">[14:00:00]</span> 情報: ターン004開始。エージェントの提案を処理中...
+                </div>
+            </div>
+        </div>
+    </main>
+</body>
+
+</html>

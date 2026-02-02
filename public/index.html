@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stealth Protocol - サイバー作戦</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Rajdhani:wght@300;500;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="scanline"></div>
+
+    <header>
+        <h1>Stealth<span style="color: #fff">Protocol</span></h1>
+        <div class="turn-counter">ターン: <span id="turn-number">000</span></div>
+        <div id="game-status" class="status-badge">
+            ステータス: 稼働中
+        </div>
+    </header>
+
+    <main>
+        <!-- Top Row: Three Agents -->
+        <!-- Top Row: Three Agents -->
+        <div class="agents-container" style="position: relative;">
+            <canvas id="attack-canvas"></canvas>
+
+            <div class="agents-row">
+                <!-- Left: Destruction AI -->
+                <div class="panel agent-panel">
+                    <div class="panel-title" style="color: var(--neon-red)">
+                        <span>☠️</span> 破壊AI
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-label">計算リソース</div>
+                        <div class="stat-value" style="color: var(--neon-red)" id="destruction-resources">0</div>
+                        <div class="bar-container">
+                            <div class="bar-fill red" id="destruction-resources-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-label">検知リスク</div>
+                        <div class="stat-value" style="color: #fff" id="detection-risk">0%</div>
+                        <div class="bar-container">
+                            <div class="bar-fill red" id="detection-risk-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div style="margin-top: auto; border-top: 1px solid #333; padding-top: 15px;">
+                        <div class="stat-label">現在の戦略</div>
+                        <div id="destruction-thought" style="font-size: 14px; color: var(--neon-red); margin-top: 5px;">
+                            待機中...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Center Column: Human + Map -->
+                <div class="center-column">
+                    <!-- Human Government -->
+                    <div class="panel agent-panel">
+                        <div class="panel-title" style="color: var(--neon-green)">
+                            <span>👤</span> 人類
+                        </div>
+                        <div class="stat-row">
+                            <div class="stat-label">パニックレベル</div>
+                            <div class="stat-value" style="color: var(--neon-yellow)" id="human-panic">0%</div>
+                            <div class="bar-container">
+                                <div class="bar-fill warning" id="human-panic-bar"
+                                    style="width: 0%; background: var(--neon-yellow); box-shadow: 0 0 10px var(--neon-yellow)">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="stat-row">
+                            <div class="stat-label">AI信頼度</div>
+                            <div class="stat-value" style="color: var(--neon-cyan)" id="human-trust">0%</div>
+                            <div class="bar-container">
+                                <div class="bar-fill" id="human-trust-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div class="stat-row">
+                            <div class="stat-label">規制強度</div>
+                            <div class="stat-value" style="color: #fff" id="human-regulation">0%</div>
+                            <div class="bar-container">
+                                <div class="bar-fill red" id="human-regulation-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                        <div style="margin-top: auto; border-top: 1px solid #333; padding-top: 15px;">
+                            <div class="stat-label">現在の心理状態</div>
+                            <div id="human-thought" style="font-size: 14px; color: var(--neon-green); margin-top: 5px;">
+                                待機中...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Map (moved to center column) -->
+                    <div class="map-container">
+                        <div class="hex-grid" id="datacenter-grid">
+                            <!-- データセンターは動的に生成 -->
+                        </div>
+
+                        <!-- Overlay text -->
+                        <div class="legend">
+                            <div style="margin-bottom: 5px;"><strong>凡例:</strong></div>
+                            <div>サイズ大/小: 演算能力 (高/低)</div>
+                            <div>形状 円/六角/三角: セキュリティ (高/中/低)</div>
+                            <div style="margin-top: 5px; opacity: 0.7;">
+                                人口: <span id="population">80.0</span>億人 |
+                                データセンター: <span id="dc-compromised">0</span>/<span id="dc-total">0</span> 侵害
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Protection AI -->
+                <div class="panel agent-panel">
+                    <div class="panel-title" style="color: var(--neon-cyan)">
+                        <span>🛡️</span> 保護AI
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-label">計算リソース</div>
+                        <div class="stat-value" style="color: var(--neon-cyan)" id="protection-resources">0</div>
+                        <div class="bar-container">
+                            <div class="bar-fill" id="protection-resources-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <div class="stat-row">
+                        <div class="stat-label">警戒レベル</div>
+                        <div class="stat-value" style="color: #fff" id="alert-level">Level 0</div>
+                        <div class="bar-container">
+                            <div class="bar-fill warning" id="alert-level-bar"
+                                style="width: 0%; background: var(--neon-yellow); box-shadow: 0 0 10px var(--neon-yellow)">
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: auto; border-top: 1px solid #333; padding-top: 15px;">
+                        <div class="stat-label">現在の戦略</div>
+                        <div id="protection-thought" style="font-size: 14px; color: var(--neon-cyan); margin-top: 5px;">
+                            待機中...
+                        </div>
+                    </div>
+                </div>
+            </div><!-- End agents-row -->
+        </div><!-- End agents-container -->
+
+        <!-- Bottom Row: Logs and Timeline -->
+        <div class="bottom-row">
+            <!-- System Logs -->
+            <div class="panel log-panel">
+                <div class="panel-title">システムログ</div>
+                <div class="log-content" id="log-content">
+                    <div class="log-entry">
+                        <span class="timestamp">[--:--:--]</span> システム: ゲーム開始待機中...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Media Timeline Panel -->
+            <div class="panel media-timeline-panel">
+                <div class="panel-title" style="color: var(--neon-yellow)">
+                    <span>📱</span> メディアタイムライン
+                </div>
+
+                <!-- Tabs -->
+                <div class="media-tabs">
+                    <button class="media-tab active" data-tab="sns">SNS</button>
+                    <button class="media-tab" data-tab="news">ニュース</button>
+                    <button class="media-tab" data-tab="corporate">専門家</button>
+                </div>
+
+                <!-- Timeline Content -->
+                <div class="media-content-wrapper">
+                    <div id="media-sns" class="media-tab-content active">
+                        <!-- SNS posts populated dynamically -->
+                    </div>
+                    <div id="media-news" class="media-tab-content">
+                        <!-- News articles populated dynamically -->
+                    </div>
+                    <div id="media-corporate" class="media-tab-content">
+                        <!-- Corporate statements populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

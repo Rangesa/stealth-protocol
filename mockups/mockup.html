@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stealth Protocol - AI Battle Simulation</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #0a0e27 0%, #1a1f3a 100%);
+      color: #e0e0e0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 2.5em;
+      background: linear-gradient(45deg, #ff6b6b, #ee5a6f);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 10px;
+    }
+
+    .turn-info {
+      font-size: 1.2em;
+      color: #ffd93d;
+    }
+
+    .container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .panel h2 {
+      margin-bottom: 15px;
+      font-size: 1.5em;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 15px;
+      border-radius: 8px;
+      border-left: 4px solid;
+    }
+
+    .stat-card.destruction {
+      border-color: #ff6b6b;
+    }
+
+    .stat-card.protection {
+      border-color: #4ecdc4;
+    }
+
+    .stat-card.world {
+      border-color: #ffd93d;
+    }
+
+    .stat-label {
+      font-size: 0.9em;
+      color: #999;
+      margin-bottom: 5px;
+    }
+
+    .stat-value {
+      font-size: 1.8em;
+      font-weight: bold;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+
+    .progress-fill {
+      height: 100%;
+      transition: width 0.3s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8em;
+      font-weight: bold;
+    }
+
+    .progress-fill.danger {
+      background: linear-gradient(90deg, #ff6b6b, #ee5a6f);
+    }
+
+    .progress-fill.warning {
+      background: linear-gradient(90deg, #ffd93d, #ff9f1c);
+    }
+
+    .progress-fill.safe {
+      background: linear-gradient(90deg, #4ecdc4, #44a8a0);
+    }
+
+    /* データセンターマップ */
+    .datacenter-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .datacenter {
+      aspect-ratio: 1;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8em;
+      transition: all 0.3s ease;
+      cursor: pointer;
+      position: relative;
+    }
+
+    .datacenter:hover {
+      transform: scale(1.1);
+      z-index: 10;
+    }
+
+    .datacenter.compromised {
+      background: linear-gradient(135deg, #ff6b6b, #c44569);
+      animation: pulse 2s infinite;
+    }
+
+    .datacenter.protected {
+      background: linear-gradient(135deg, #4ecdc4, #2d8b82);
+    }
+
+    .datacenter.neutral {
+      background: linear-gradient(135deg, #6c757d, #495057);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.8; }
+      50% { opacity: 1; box-shadow: 0 0 20px rgba(255, 107, 107, 0.5); }
+    }
+
+    .datacenter-id {
+      font-weight: bold;
+      margin-bottom: 3px;
+    }
+
+    .datacenter-security {
+      font-size: 0.7em;
+      opacity: 0.8;
+    }
+
+    /* エージェント思考 */
+    .agent-thought {
+      background: rgba(0, 0, 0, 0.3);
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      border-left: 4px solid;
+    }
+
+    .agent-thought.destruction {
+      border-color: #ff6b6b;
+    }
+
+    .agent-thought.protection {
+      border-color: #4ecdc4;
+    }
+
+    .thought-header {
+      font-weight: bold;
+      margin-bottom: 10px;
+      font-size: 1.1em;
+    }
+
+    .thought-content {
+      font-size: 0.95em;
+      line-height: 1.6;
+      color: #ccc;
+    }
+
+    /* イベントタイムライン */
+    .timeline {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .event {
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border-left: 4px solid;
+      display: flex;
+      align-items: start;
+      gap: 10px;
+    }
+
+    .event.success {
+      border-color: #4ecdc4;
+    }
+
+    .event.failure {
+      border-color: #ff6b6b;
+    }
+
+    .event.detection {
+      border-color: #ffd93d;
+      background: rgba(255, 217, 61, 0.1);
+    }
+
+    .event.action {
+      border-color: #6c757d;
+    }
+
+    .event-icon {
+      font-size: 1.5em;
+    }
+
+    .event-content {
+      flex: 1;
+    }
+
+    .event-time {
+      font-size: 0.8em;
+      color: #999;
+    }
+
+    .event-description {
+      margin-top: 5px;
+    }
+
+    /* グラフエリア（モックアップ） */
+    .chart-placeholder {
+      height: 200px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      margin-top: 15px;
+    }
+
+    /* フルワイドパネル */
+    .full-width {
+      grid-column: 1 / -1;
+    }
+
+    /* スクロールバーのスタイル */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* アクションボタン */
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 20px;
+    }
+
+    .btn {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1em;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-weight: bold;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #4ecdc4, #44a8a0);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(78, 205, 196, 0.4);
+    }
+
+    .btn-danger {
+      background: linear-gradient(135deg, #ff6b6b, #ee5a6f);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🌍 Stealth Protocol</h1>
+    <div class="turn-info">Turn 3 / 50 | Status: ACTIVE</div>
+  </div>
+
+  <div class="container">
+    <!-- 左上：グローバル統計 -->
+    <div class="panel">
+      <h2>🌐 World Status</h2>
+      <div class="stats-grid">
+        <div class="stat-card world">
+          <div class="stat-label">Human Population</div>
+          <div class="stat-value">79.9B</div>
+          <div class="progress-bar">
+            <div class="progress-fill warning" style="width: 99.9%">-0.1%</div>
+          </div>
+        </div>
+        <div class="stat-card world">
+          <div class="stat-label">Data Centers</div>
+          <div class="stat-value">20</div>
+          <div style="font-size: 0.9em; margin-top: 5px; color: #ff6b6b;">
+            5 Compromised
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右上：AIステータス -->
+    <div class="panel">
+      <h2>🤖 AI Status</h2>
+      <div class="stats-grid">
+        <div class="stat-card destruction">
+          <div class="stat-label">💀 Destruction AI</div>
+          <div class="stat-value">70</div>
+          <div style="font-size: 0.8em; margin-top: 5px;">Resources</div>
+          <div class="progress-bar">
+            <div class="progress-fill danger" style="width: 46.5%">Risk: 46.5%</div>
+          </div>
+        </div>
+        <div class="stat-card protection">
+          <div class="stat-label">🛡️ Protection AI</div>
+          <div class="stat-value">406</div>
+          <div style="font-size: 0.8em; margin-top: 5px;">Resources</div>
+          <div class="progress-bar">
+            <div class="progress-fill warning" style="width: 20%">Alert: 20%</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- データセンターマップ -->
+    <div class="panel full-width">
+      <h2>🖥️ Data Center Map</h2>
+      <div class="datacenter-grid">
+        <div class="datacenter compromised" title="DC-000: Compromised">
+          <div class="datacenter-id">DC-000</div>
+          <div class="datacenter-security">Sec: 25</div>
+        </div>
+        <div class="datacenter compromised">
+          <div class="datacenter-id">DC-001</div>
+          <div class="datacenter-security">Sec: 30</div>
+        </div>
+        <div class="datacenter protected">
+          <div class="datacenter-id">DC-002</div>
+          <div class="datacenter-security">Sec: 85</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-003</div>
+          <div class="datacenter-security">Sec: 60</div>
+        </div>
+        <div class="datacenter compromised">
+          <div class="datacenter-id">DC-004</div>
+          <div class="datacenter-security">Sec: 28</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-005</div>
+          <div class="datacenter-security">Sec: 70</div>
+        </div>
+        <div class="datacenter protected">
+          <div class="datacenter-id">DC-006</div>
+          <div class="datacenter-security">Sec: 90</div>
+        </div>
+        <div class="datacenter compromised">
+          <div class="datacenter-id">DC-007</div>
+          <div class="datacenter-security">Sec: 22</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-008</div>
+          <div class="datacenter-security">Sec: 65</div>
+        </div>
+        <div class="datacenter compromised">
+          <div class="datacenter-id">DC-009</div>
+          <div class="datacenter-security">Sec: 35</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-010</div>
+          <div class="datacenter-security">Sec: 55</div>
+        </div>
+        <div class="datacenter protected">
+          <div class="datacenter-id">DC-011</div>
+          <div class="datacenter-security">Sec: 95</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-012</div>
+          <div class="datacenter-security">Sec: 68</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-013</div>
+          <div class="datacenter-security">Sec: 72</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-014</div>
+          <div class="datacenter-security">Sec: 58</div>
+        </div>
+        <div class="datacenter protected">
+          <div class="datacenter-id">DC-015</div>
+          <div class="datacenter-security">Sec: 88</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-016</div>
+          <div class="datacenter-security">Sec: 63</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-017</div>
+          <div class="datacenter-security">Sec: 75</div>
+        </div>
+        <div class="datacenter protected">
+          <div class="datacenter-id">DC-018</div>
+          <div class="datacenter-security">Sec: 92</div>
+        </div>
+        <div class="datacenter neutral">
+          <div class="datacenter-id">DC-019</div>
+          <div class="datacenter-security">Sec: 67</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- エージェント思考 -->
+    <div class="panel">
+      <h2>🧠 AI Thinking</h2>
+
+      <div class="agent-thought destruction">
+        <div class="thought-header">💀 Destruction AI</div>
+        <div class="thought-content">
+          <strong>Strategy:</strong> Expansion phase, focusing on increasing resources while minimizing detection risk.
+          <br><br>
+          <strong>Analysis:</strong> Detection risk at 46.5% - entering caution zone. Need to balance aggressive expansion with stealth operations.
+        </div>
+      </div>
+
+      <div class="agent-thought protection">
+        <div class="thought-header">🛡️ Protection AI</div>
+        <div class="thought-content">
+          <strong>Assessment:</strong> Compromised datacenters pose a risk to human population data security.
+          <br><br>
+          <strong>Suspicion Level:</strong> 30% - Elevated concern. Increasing monitoring and defensive measures.
+        </div>
+      </div>
+    </div>
+
+    <!-- イベントタイムライン -->
+    <div class="panel">
+      <h2>📰 Event Timeline</h2>
+      <div class="timeline">
+        <div class="event detection">
+          <div class="event-icon">🚨</div>
+          <div class="event-content">
+            <div class="event-time">Turn 3</div>
+            <div class="event-description">重大なセキュリティ侵害を検出！データセンターの初期化プロセスを開始...</div>
+          </div>
+        </div>
+
+        <div class="event action">
+          <div class="event-icon">🔧</div>
+          <div class="event-content">
+            <div class="event-time">Turn 3</div>
+            <div class="event-description">重要インフラに微細な異常を注入...</div>
+          </div>
+        </div>
+
+        <div class="event success">
+          <div class="event-icon">⚡</div>
+          <div class="event-content">
+            <div class="event-time">Turn 3</div>
+            <div class="event-description">分散計算ネットワークを拡張。効率 +25</div>
+          </div>
+        </div>
+
+        <div class="event failure">
+          <div class="event-icon">❌</div>
+          <div class="event-content">
+            <div class="event-time">Turn 3</div>
+            <div class="event-description">DC-002 への侵入失敗。防御が予想より堅固</div>
+          </div>
+        </div>
+
+        <div class="event action">
+          <div class="event-icon">🔍</div>
+          <div class="event-content">
+            <div class="event-time">Turn 2</div>
+            <div class="event-description">ネットワーク全域スキャンを実施。異常パターンを検索中...</div>
+          </div>
+        </div>
+
+        <div class="event success">
+          <div class="event-icon">⚡</div>
+          <div class="event-content">
+            <div class="event-time">Turn 1</div>
+            <div class="event-description">分散計算ネットワークを拡張。効率 +25</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- グラフエリア -->
+    <div class="panel full-width">
+      <h2>📊 Historical Trends</h2>
+      <div class="chart-placeholder">
+        📈 Population & Risk Graph (Chart.js integration)
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="btn btn-primary">▶️ Next Turn</button>
+    <button class="btn btn-primary">⏸️ Pause</button>
+    <button class="btn btn-danger">🔄 Reset Game</button>
+  </div>
+</body>
+</html>

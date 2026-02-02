@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stealth Protocol - 監視モニター</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #f3f4f6;
+            --card-bg: #ffffff;
+            --primary-blue: #3b82f6;
+            --primary-red: #ef4444;
+            --primary-green: #10b981;
+            --text-main: #1f2937;
+            --text-muted: #6b7280;
+        }
+
+        /* Dark Mode Override */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #111827;
+                --card-bg: #1f2937;
+                --text-main: #f9fafb;
+                --text-muted: #9ca3af;
+            }
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Navbar */
+        nav {
+            background: var(--card-bg);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+
+        .brand {
+            font-weight: 700;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .badge {
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 999px;
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        /* Dashboard Grid */
+        .dashboard {
+            flex: 1;
+            padding: 30px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: auto 1fr;
+            gap: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .card h3 {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .big-number {
+            font-size: 32px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .trend {
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .trend.up {
+            color: var(--primary-green);
+        }
+
+        .trend.down {
+            color: var(--primary-red);
+        }
+
+        /* Specific Areas */
+        .metric-card {
+            grid-column: span 1;
+        }
+
+        .map-card {
+            grid-column: span 3;
+            grid-row: span 2;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .feed-card {
+            grid-column: span 1;
+            grid-row: span 2;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Map Visualization (Abstract Dots) */
+        .map-viz {
+            flex: 1;
+            background: #f9f9fa;
+            /* Light map bg */
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            .map-viz {
+                background: #111;
+            }
+        }
+
+        .node {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: #cbd5e1;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .node:hover {
+            transform: scale(1.5);
+        }
+
+        .node.active {
+            background: var(--primary-blue);
+            box-shadow: 0 0 10px var(--primary-blue);
+        }
+
+        .node.danger {
+            background: var(--primary-red);
+            box-shadow: 0 0 10px var(--primary-red);
+        }
+
+        /* Feed List */
+        .feed-list {
+            flex: 1;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+
+        .feed-item {
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+        }
+
+        .feed-item:last-child {
+            border-bottom: none;
+        }
+
+        .feed-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .feed-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Buttons */
+        .btn {
+            background: var(--primary-blue);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            font-size: 14px;
+            transition: opacity 0.2s;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+        }
+    </style>
+</head>
+
+<body>
+    <nav>
+        <div class="brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                <path d="M2 17l10 5 10-5"></path>
+                <path d="M2 12l10 5 10-5"></path>
+            </svg>
+            Stealth Protocol <span class="badge">v1.2.0</span>
+        </div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <span style="font-size: 14px; color: var(--text-muted)">ユーザー: 司令官</span>
+            <button class="btn">シミュレーション一時停止</button>
+        </div>
+    </nav>
+
+    <div class="dashboard">
+        <!-- Metrics -->
+        <div class="card metric-card">
+            <h3>世界総人口</h3>
+            <div class="big-number">792億人</div>
+            <div class="trend down">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline>
+                    <polyline points="17 18 23 18 23 12"></polyline>
+                </svg>
+                0.5% 減少
+            </div>
+        </div>
+
+        <div class="card metric-card">
+            <h3>脅威レベル</h3>
+            <div class="big-number" style="color: var(--primary-red)">高</div>
+            <div class="trend up" style="color: var(--primary-red)">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
+                    <polyline points="17 6 23 6 23 12"></polyline>
+                </svg>
+                上昇中 (+12%)
+            </div>
+        </div>
+
+        <div class="card metric-card">
+            <h3>データセンター</h3>
+            <div class="big-number">20/25</div>
+            <div class="trend">
+                オンライン & 安全
+            </div>
+        </div>
+
+        <div class="card metric-card">
+            <h3>シミュレーション経過</h3>
+            <div class="big-number">ターン 14</div>
+            <div class="trend">
+                フェーズ: 中盤
+            </div>
+        </div>
+
+        <!-- Main Map -->
+        <div class="card map-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3>地理空間ネットワーク可視化</h3>
+                <div style="display: flex; gap: 10px;">
+                    <span class="badge">レイヤー: 物理層</span>
+                    <span class="badge">レイヤー: 論理層</span>
+                </div>
+            </div>
+
+            <div class="map-viz">
+                <!-- Abstract Nodes scattered -->
+                <div class="node active" style="top: 20%; left: 30%"></div>
+                <div class="node active" style="top: 40%; left: 60%"></div>
+                <div class="node danger" style="top: 70%; left: 20%"></div>
+                <div class="node" style="top: 50%; left: 50%"></div>
+                <div class="node active" style="top: 25%; left: 75%"></div>
+                <div class="node danger" style="top: 80%; left: 80%"></div>
+                <div class="node" style="top: 35%; left: 15%"></div>
+
+                <!-- Connecting lines would be here with SVG ideally -->
+                <svg
+                    style="position: absolute; top:0; left:0; width:100%; height:100%; pointer-events: none; opacity: 0.2">
+                    <line x1="30%" y1="20%" x2="50%" y2="50%" stroke="currentColor" />
+                    <line x1="60%" y1="40%" x2="50%" y2="50%" stroke="currentColor" />
+                    <line x1="75%" y1="25%" x2="60%" y2="40%" stroke="currentColor" />
+                </svg>
+            </div>
+        </div>
+
+        <!-- Feed -->
+        <div class="card feed-card">
+            <h3>アクティビティフィード</h3>
+            <div class="feed-list">
+                <div class="feed-item">
+                    <div class="feed-title">ネットワークスキャン開始</div>
+                    <div class="feed-meta">
+                        <span>実行者: 保護AI</span>
+                        <span>2分前</span>
+                    </div>
+                </div>
+                <div class="feed-item">
+                    <div class="feed-title" style="color: var(--primary-red)">セキュリティ侵害未遂</div>
+                    <div class="feed-meta">
+                        <span>セクター 04</span>
+                        <span>5分前</span>
+                    </div>
+                </div>
+                <div class="feed-item">
+                    <div class="feed-title">リソース再配分</div>
+                    <div class="feed-meta">
+                        <span>標準プロトコル</span>
+                        <span>8分前</span>
+                    </div>
+                </div>
+                <div class="feed-item">
+                    <div class="feed-title">人口動態安定</div>
+                    <div class="feed-meta">
+                        <span>定期レポート</span>
+                        <span>10分前</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</body>
+
+</html>
